@@ -175,9 +175,9 @@ Outlook(Microsoft 365) 받은 메일함을 항상 화면 한쪽에 띄워두는 
 | `설치/build_installer.bat` | **배포용 단일 설치파일 빌드** (PyInstaller + Inno Setup → `설치/output/OutlookWidgetSetup.exe`) |
 | `설치/installer.iss` | Inno Setup 설치파일 스크립트 |
 
-> 배포용 설치파일을 만들려면 [Inno Setup](https://jrsoftware.org/isdl.php) 을 설치한 뒤
-> `설치\build_installer.bat` 을 실행하세요. 개인 `config.py` 는 빌드 중 자동으로
-> placeholder 로 교체됐다가 복원되어, 배포 exe 에 개인정보가 포함되지 않습니다.
+> 새 버전 배포·업데이트 방법(버전 올리기 → 빌드 → 릴리스, 사용자 업데이트 방식)은
+> **[설치/배포방법.md](설치/배포방법.md)** 참고. 배포 exe 에는 개인 정보가 포함되지 않습니다
+> (빌드 시 `config.py` 를 placeholder 로 자동 교체·복원).
 
 ---
 
