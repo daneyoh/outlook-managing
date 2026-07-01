@@ -1,0 +1,54 @@
+# 인증 토큰 — 절대 커밋 금지
+token_cache.bin
+
+# 실제 메일 데이터 (개인정보/회사정보)
+MAIL_db/
+mailbox.json
+mailbox.csv
+
+# 렌더된 결과물 (실제 메일 내용 포함)
+dashboard.html
+weekly_report.html
+weekly_review.html
+
+# 런타임 상태 (개인 todo/vip/완료 — 메일 제목 포함)
+.omc/state/
+02. DB/state/
+02. DB/logs/
+02. DB/token_cache.bin
+*.bak
+
+# 파이썬 캐시
+__pycache__/
+*.pyc
+
+# 빌드 산출물 (PyInstaller / Inno Setup) — 배포용 exe 는 GitHub Releases 로
+build/
+dist/
+설치/output/
+OutlookWidget.zip
+# WebView2 부트스트래퍼 — build_installer.bat 이 필요 시 자동 다운로드
+설치/MicrosoftEdgeWebview2Setup.exe
+
+# 로그
+fetch_log.txt
+
+# 보관 폴더
+_미사용(보관)/
+
+# 로컬 설정 (개인정보 포함)
+.claude/settings.local.json
+00. BACKEND/config.py
+
+# OMC 세션 로그 (대화 포함)
+.omc/sessions/
+.omc/logs/
+.omc/notepad.md
+.omc/project-memory.json
+
+# 로컬 에이전트/에디터 도구 상태 (프로젝트 소스 아님 — 공개 저장소에서 제외)
+.agents/
+.claude/
+.omc/
+.vscode/
+skills-lock.json

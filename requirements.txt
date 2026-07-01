@@ -1,0 +1,5 @@
+msal>=1.28
+requests>=2.31
+pywebview>=5.0
+pywin32>=306
+win11toast>=0.35
