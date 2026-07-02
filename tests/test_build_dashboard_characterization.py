@@ -6,9 +6,11 @@ behavior-preserving.
 Exceptions (assert CORRECTED, not current, behavior) per the plan:
   1. project_of dict-input: xfail'd until Phase 2.1 (see TestProjectOf).
   2. INTERNAL_DOMAIN-unset + MY_EMAIL-set fallback guard: asserts the *documented*
-     `build_dashboard.py:34-35` or-fallback behavior (this IS current behavior at
-     import time for a fixed config; the test pins it explicitly at the source level
-     via monkeypatch so Phase 1.5.2's accessor conversion cannot silently drop it).
+     or-fallback behavior. Phase 1.5.2 converted the frozen module-level
+     INTERNAL_DOMAIN/MY_EMAIL constants into LIVE accessors
+     (get_internal_domain / get_my_email); these tests were co-evolved to call the
+     accessors while asserting the SAME expected values (fallback → MY_EMAIL domain),
+     so the accessor conversion cannot silently drop the fallback.
 
 No source files are modified by this test file.
 """
@@ -291,79 +293,65 @@ class TestHasAction:
 # ---------------------------------------------------------------------------
 # Mandatory fallback-guard case (guards Phase 1.5.2):
 # INTERNAL_DOMAIN unset + MY_EMAIL set → internal/external classification derives
-# the internal domain from MY_EMAIL's domain (build_dashboard.py:34-35 or-fallback).
+# the internal domain from MY_EMAIL's domain (the or-fallback formerly at
+# build_dashboard.py:34-35, now inside get_internal_domain()).
 #
-# The smallest available seam today is the module-level constants themselves
-# (INTERNAL_DOMAIN/MY_EMAIL) plus the inline `is_internal = bool(INTERNAL_DOMAIN) and
-# INTERNAL_DOMAIN in from_field` predicate embedded in build_data()'s todo-collection
-# loop (build_dashboard.py:363). build_data() itself is not independently seamed for
-# this predicate (it is inline in a loop over mailbox.json rows, not a standalone
-# function) — per the plan, we do not refactor to create a seam; instead we pin the
-# module-level constant derivation directly (this IS the `or`-fallback in question)
-# and additionally exercise the inline predicate shape via a monkeypatched constant,
-# documenting that build_data() itself is the Phase-2-extractable target.
+# Phase 1.5.2 CO-EVOLUTION: the frozen module-level constants INTERNAL_DOMAIN /
+# MY_EMAIL are now LIVE accessors — get_internal_domain() / get_my_email(). These
+# tests were updated to call the accessors instead of reading the (now-removed)
+# module-level string attribute and reloading the module. The EXPECTED VALUES are
+# unchanged (fallback → MY_EMAIL domain; internal predicate matches on domain).
+# Because the accessor resolves live, monkeypatching config's MY_EMAIL is enough —
+# no importlib.reload is needed; this also demonstrates the restart-free liveness.
+# The inline predicate shape used in build_data() (build_dashboard.py) is exercised
+# via the same accessor call, mirroring the production `is_internal = bool(dom) and
+# dom in from_field` computation.
 # ---------------------------------------------------------------------------
 
 class TestInternalDomainFallbackGuard:
     def test_internal_domain_falls_back_to_my_email_domain_when_unset(self, monkeypatch):
-        """Pins build_dashboard.py:34-35 for real: when config.INTERNAL_DOMAIN is
-        empty/unset and config.MY_EMAIL is set, the module-level INTERNAL_DOMAIN
-        derives from MY_EMAIL's domain. Unlike a hand-derived expression, this
-        monkeypatches the actual `config` module (which build_dashboard imports as
-        `_cfg`) and reloads build_dashboard so its real top-level derivation
-        (build_dashboard.py:34-35) re-runs against the patched config, then reads
-        the real module attribute — build_dashboard.INTERNAL_DOMAIN — rather than a
-        local restatement of the formula. If build_dashboard.py:34-35 were deleted
-        or its fallback broken, this test would fail.
-
-        config and build_dashboard are reloaded back to their original state on
-        teardown so no other test observes the patched config.
+        """Pins the or-fallback for real: when INTERNAL_DOMAIN is empty/unset and
+        MY_EMAIL is set, get_internal_domain() derives the domain from MY_EMAIL.
+        Phase 1.5.2 co-evolution: reads the LIVE accessor build_dashboard
+        .get_internal_domain() instead of the removed module-level string attribute.
+        The accessor resolves config live, so patching config's MY_EMAIL (with
+        INTERNAL_DOMAIN blank) suffices — no module reload. If the accessor's
+        or-fallback (or its nested live get_my_email call) were dropped, this fails.
         """
-        import importlib
         import config
-        import build_dashboard
 
-        original_my_email = config.MY_EMAIL
-        original_internal_domain = getattr(config, "INTERNAL_DOMAIN", None)
-        had_internal_domain_attr = hasattr(config, "INTERNAL_DOMAIN")
-
-        def _restore():
-            monkeypatch.undo()
-            if had_internal_domain_attr:
-                config.INTERNAL_DOMAIN = original_internal_domain
-            elif hasattr(config, "INTERNAL_DOMAIN"):
-                del config.INTERNAL_DOMAIN
-            config.MY_EMAIL = original_my_email
-            importlib.reload(build_dashboard)
-
+        # user_config.json must not shadow config for this test; the accessor's
+        # precedence is user_config.json > config.py. Force the loader to return {}
+        # so we exercise the config.py branch deterministically.
+        monkeypatch.setattr(build_dashboard, "_load_user_config", lambda: {})
         monkeypatch.setattr(config, "MY_EMAIL", "user@internal-example.com")
         monkeypatch.setattr(config, "INTERNAL_DOMAIN", "", raising=False)
 
-        try:
-            importlib.reload(build_dashboard)
-            assert build_dashboard.INTERNAL_DOMAIN == "internal-example.com"
-        finally:
-            _restore()
+        assert build_dashboard.get_internal_domain() == "internal-example.com"
 
     def test_classification_predicate_uses_fallback_derived_domain(self, monkeypatch):
         """Exercises the inline is_internal predicate shape used in build_data()
-        (build_dashboard.py:363) against a mail whose sender domain matches the
-        MY_EMAIL-derived fallback domain, with INTERNAL_DOMAIN monkeypatched to
-        simulate 'config field unset, fell back to MY_EMAIL domain' — the state
-        build_dashboard's module-level fallback produces today."""
-        monkeypatch.setattr(build_dashboard, "MY_EMAIL", "user@internal-example.com")
-        monkeypatch.setattr(build_dashboard, "INTERNAL_DOMAIN", "internal-example.com")
+        against a mail whose sender domain matches the MY_EMAIL-derived fallback
+        domain. Phase 1.5.2 co-evolution: computes the domain via the LIVE accessor
+        get_internal_domain() (fallback branch) rather than reading a monkeypatched
+        module-level constant."""
+        monkeypatch.setattr(build_dashboard, "_load_user_config", lambda: {})
+        import config
+        monkeypatch.setattr(config, "MY_EMAIL", "user@internal-example.com")
+        monkeypatch.setattr(config, "INTERNAL_DOMAIN", "", raising=False)
 
+        _dom = build_dashboard.get_internal_domain()
         from_field = "colleague@internal-example.com".lower()
-        is_internal = (bool(build_dashboard.INTERNAL_DOMAIN) and
-                        build_dashboard.INTERNAL_DOMAIN in from_field)
+        is_internal = bool(_dom) and _dom in from_field
         assert is_internal is True
 
     def test_classification_predicate_false_when_domain_does_not_match_fallback(self, monkeypatch):
-        monkeypatch.setattr(build_dashboard, "MY_EMAIL", "user@internal-example.com")
-        monkeypatch.setattr(build_dashboard, "INTERNAL_DOMAIN", "internal-example.com")
+        monkeypatch.setattr(build_dashboard, "_load_user_config", lambda: {})
+        import config
+        monkeypatch.setattr(config, "MY_EMAIL", "user@internal-example.com")
+        monkeypatch.setattr(config, "INTERNAL_DOMAIN", "", raising=False)
 
+        _dom = build_dashboard.get_internal_domain()
         from_field = "vendor@external-example.com".lower()
-        is_internal = (bool(build_dashboard.INTERNAL_DOMAIN) and
-                        build_dashboard.INTERNAL_DOMAIN in from_field)
+        is_internal = bool(_dom) and _dom in from_field
         assert is_internal is False

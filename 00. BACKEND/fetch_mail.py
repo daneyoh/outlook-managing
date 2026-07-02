@@ -25,20 +25,19 @@ import requests
 
 import config as _config
 import config
+import paths
 
-# user_config.json 우선 로드 — 배포 환경에서 사용자 설정이 config.py를 override
+# user_config.json 우선 로드 — 배포 환경에서 사용자 설정이 config.py를 override.
+# Phase 1.5.2: 로더 단일화 — build_dashboard._load_user_config 을 단일 소스로 사용해
+# 경로(paths.USER_CONFIG_FILE) · 우선순위(user_config.json > config.py)를 통일한다.
+# build_dashboard 는 leaf 성격(paths/config/state_io 만 의존)이라 top-level import 해도
+# 순환이 생기지 않는다. on-disk 포맷은 불변.
 def _load_user_cfg_early():
     try:
-        _here = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
-                 else os.path.dirname(os.path.abspath(__file__)))
-        _root = _here if getattr(sys, "frozen", False) else os.path.dirname(_here)
-        _uc = os.path.join(_root, "02. DB", "state", "user_config.json")
-        if os.path.exists(_uc):
-            with open(_uc, encoding="utf-8") as _f:
-                return json.load(_f)
+        import build_dashboard
+        return build_dashboard._load_user_config()
     except Exception:
-        pass
-    return {}
+        return {}
 
 for _k, _v in _load_user_cfg_early().items():
     setattr(config, _k, _v)
@@ -49,20 +48,22 @@ _BODY_MAX_CHARS  = getattr(_config, "BODY_MAX_CHARS", 10000)
 GRAPH = "https://graph.microsoft.com/v1.0"
 AUTHORITY = f"https://login.microsoftonline.com/{config.TENANT_ID}"
 
-HERE = (os.path.dirname(sys.executable) if getattr(sys, "frozen", False)
-        else os.path.dirname(os.path.abspath(__file__)))
-ROOT = os.path.dirname(HERE)                     # 프로젝트 루트 (backend의 부모)
-DB_BASE = os.path.join(ROOT, "02. DB")
-DB_DIR = os.path.join(DB_BASE, "MAIL_db")        # 가져온 메일 저장 폴더
+# Phase 1.5.1: 경로 상수는 paths.py 단일 소스에서 가져온다 (기존 이름 유지).
+# 주의: 이 모듈의 DB_DIR 은 <ROOT>/02. DB/MAIL_db (app.DB_DIR 과 의미가 다르므로
+#       paths.MAIL_DB_DIR 로 alias 한다). DB_BASE 는 <ROOT>/02. DB.
+HERE = paths.HERE
+ROOT = paths.ROOT                                # 프로젝트 루트 (backend의 부모)
+DB_BASE = paths.DB_DIR
+DB_DIR = paths.MAIL_DB_DIR                        # 가져온 메일 저장 폴더
 os.makedirs(DB_DIR, exist_ok=True)
 os.makedirs(os.path.join(DB_BASE, "logs"), exist_ok=True)
-STATE_DIR = os.path.join(DB_BASE, "state")
+STATE_DIR = paths.STATE_DIR
 os.makedirs(STATE_DIR, exist_ok=True)
-CACHE_FILE = os.path.join(DB_BASE, "token_cache.bin")
-MY_GROUPS_FILE = os.path.join(STATE_DIR, "widget_my_groups.json")
-JSON_FILE = os.path.join(DB_DIR, "mailbox.json")
-CSV_FILE = os.path.join(DB_DIR, "mailbox.csv")
-LOG_FILE = os.path.join(DB_BASE, "logs", "fetch_log.txt")
+CACHE_FILE = paths.CACHE_FILE
+MY_GROUPS_FILE = paths.MY_GROUPS_FILE
+JSON_FILE = paths.MAIL_JSON_FILE
+CSV_FILE = paths.MAIL_CSV_FILE
+LOG_FILE = paths.LOG_FILE
 
 FIELDS = ["구분", "날짜", "보낸사람", "받는사람", "참조", "제목",
           "본문요약", "읽음", "첨부", "중요도", "링크"]

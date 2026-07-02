@@ -14,29 +14,76 @@ import os
 import re
 import state_io
 import config as _cfg
+import paths
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)                       # 프로젝트 루트 (backend의 부모)
-JSON_FILE = os.path.join(ROOT, "02. DB", "MAIL_db", "mailbox.json")
-OUT_FILE = os.path.join(ROOT, "01. FRONTEND", "dashboard.html")
+# Phase 1.5.1: 경로 상수는 paths.py 단일 소스에서 가져온다 (기존 이름 유지).
+HERE = paths.HERE
+ROOT = paths.ROOT                                  # 프로젝트 루트 (backend의 부모)
+JSON_FILE = paths.MAIL_JSON_FILE
+OUT_FILE = paths.DASHBOARD_OUT_FILE
 # 프로젝트 분류 규칙 파일 (사용자가 직접 편집 — {"프로젝트명": ["키워드", ...], ...})
-PROJECTS_FILE = os.path.join(ROOT, "02. DB", "state", "widget_projects.json")
-ARCHIVE_FILE = os.path.join(os.path.dirname(JSON_FILE), "mailbox_archive.json")
+PROJECTS_FILE = paths.PROJECTS_FILE
+ARCHIVE_FILE = paths.ARCHIVE_FILE
 MAX_AGE_DAYS = getattr(_cfg, "MAX_AGE_DAYS", 90)
 ARCHIVE_MAX_AGE_DAYS = getattr(_cfg, "ARCHIVE_MAX_AGE_DAYS", 365)
 
-MY_EMAIL = getattr(_cfg, "MY_EMAIL", "")
-MY_NAME = getattr(_cfg, "MY_NAME", "")
-# 사내(내부) 도메인 — 내부/외부 메일 구분에 사용. 명시 설정(INTERNAL_DOMAIN)이
-# 없으면 내 이메일 주소의 도메인 부분에서 자동으로 도출한다.
-INTERNAL_DOMAIN = (getattr(_cfg, "INTERNAL_DOMAIN", "").lower() or
-                   (MY_EMAIL.split("@")[-1].lower() if "@" in MY_EMAIL else ""))
+# ------------------------------------------------------------------
+# Phase 1.5.2: 신원(identity) 필드는 import 시점에 얼려두던 상수 대신 매 호출
+# 시점에 LIVE 로 해석하는 accessor 로 제공한다. 설정 화면(user_config.json) 저장이
+# 앱 재시작 없이 즉시 반영되게 하기 위함이다.
+#
+# 설정 우선순위(단일 문서화 규칙): user_config.json 이 config.py 를 override 한다.
+#   - _resolve_cfg(key, default) 가 매 호출마다 user_config.json 을 먼저 보고,
+#     없으면 config.py(_cfg) 값을 쓴다.
+#   - app.py / fetch_mail.py 가 import 시점에 setattr(config, ...) 로 user_config 를
+#     이미 덮어써 두었더라도, 이 accessor 는 파일을 다시 읽어 최신 값을 반영하므로
+#     어느 로더가 먼저 돌았는지와 무관하게 동일한 결과를 준다.
+def _load_user_config():
+    """user_config.json 을 dict 로 읽는다. 없거나 깨졌으면 빈 dict.
+    on-disk 포맷은 변경하지 않는다 — 읽기 타이밍/우선순위만 통일한다."""
+    try:
+        with open(paths.USER_CONFIG_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+def _resolve_cfg(key, default):
+    """설정값을 LIVE 로 해석한다: user_config.json > config.py > default."""
+    uc = _load_user_config()
+    if key in uc and uc[key] is not None:
+        return uc[key]
+    return getattr(_cfg, key, default)
+
+
+def get_my_email():
+    """내 이메일 주소 (LIVE). 설정 화면 저장이 재시작 없이 반영된다."""
+    return _resolve_cfg("MY_EMAIL", "") or ""
+
+
+def get_my_name():
+    """내 이름 (LIVE)."""
+    return _resolve_cfg("MY_NAME", "") or ""
+
+
+def get_internal_domain():
+    """사내(내부) 도메인 (LIVE) — 내부/외부 메일 구분에 사용.
+    명시 설정(INTERNAL_DOMAIN)이 없으면 내 이메일 주소의 도메인 부분에서
+    자동으로 도출한다 (기존 build_dashboard.py:34-35 or-fallback 그대로 재현).
+    fallback 의 내부 MY_EMAIL 참조도 LIVE accessor(get_my_email)를 호출한다."""
+    explicit = (_resolve_cfg("INTERNAL_DOMAIN", "") or "").lower()
+    if explicit:
+        return explicit
+    my_email = get_my_email()
+    return my_email.split("@")[-1].lower() if "@" in my_email else ""
 
 
 # 자동 조회한 소속 그룹 주소 캐시 (fetch_mail 이 /me/memberOf 로 채움)
-AUTO_GROUPS_FILE = os.path.join(ROOT, "02. DB", "state", "widget_my_groups.json")
+# fetch_mail.MY_GROUPS_FILE 와 동일 파일 (paths.MY_GROUPS_FILE).
+AUTO_GROUPS_FILE = paths.MY_GROUPS_FILE
 
 
 def _load_auto_groups():
@@ -71,7 +118,8 @@ def _is_to_me(to_field):
     """받는사람(To) 문자열에 내 이메일 또는 내 소속 그룹 주소가 있으면 True.
     그룹으로 온 메일도 '나에게 온 것'으로 취급하기 위함."""
     tf = (to_field or "").lower()
-    if MY_EMAIL and MY_EMAIL.lower() in tf:
+    my_email = get_my_email()
+    if my_email and my_email.lower() in tf:
         return True
     return any(g in tf for g in _my_group_addrs())
 
@@ -271,12 +319,8 @@ def run_archive():
     build_data() 핫패스 밖에서만 호출할 것.
     """
     # 상태 파일들에서 참조 중인 제목 키 수집
-    state_dir = os.path.join(os.path.dirname(os.path.dirname(JSON_FILE)), "state")
-    try:
-        from app import STATE_DIR as _sdir
-        state_dir = _sdir
-    except Exception:
-        pass
+    # Phase 1.5.1: app 순환 import 제거 — STATE_DIR 는 paths.py 단일 소스에서.
+    state_dir = paths.STATE_DIR
 
     referenced_keys = set()
     for fname in ["widget_done.json", "widget_excluded.json", "widget_snooze.json",
@@ -360,9 +404,11 @@ def build_data():
         from_field = (r.get("보낸사람", "") or "").lower()
         to_field = (r.get("받는사람", "") or "").lower()
         body = (r.get("제목", "") or "") + " " + (r.get("본문요약", "") or "")
-        is_internal = bool(INTERNAL_DOMAIN) and INTERNAL_DOMAIN in from_field
+        _internal_domain = get_internal_domain()
+        is_internal = bool(_internal_domain) and _internal_domain in from_field
         to_me = _is_to_me(to_field)   # 내 주소 또는 소속 그룹 주소 수신 포함
-        name_match = bool(MY_NAME) and MY_NAME in body
+        _my_name = get_my_name()
+        name_match = bool(_my_name) and _my_name in body
         if not ((is_internal and to_me) or name_match):
             continue
         gkey = norm_subject(r.get("제목", "")) or r.get("제목", "")
@@ -740,7 +786,7 @@ document.querySelectorAll('.tab').forEach(tab=>tab.onclick=()=>{
 """
 
 
-WEEKLY_OUT_FILE = os.path.join(ROOT, "01. FRONTEND", "weekly_report.html")
+WEEKLY_OUT_FILE = paths.WEEKLY_OUT_FILE
 
 WEEKLY_TEMPLATE = """<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">

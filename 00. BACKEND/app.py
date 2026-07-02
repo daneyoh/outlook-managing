@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 
 import build_dashboard
 import config
+import paths
 import state_io
 
 # OS 토스트 알림 (Windows). 없으면 조용히 비활성화.
@@ -30,45 +31,36 @@ try:
 except Exception:
     _toast = None
 
-if getattr(sys, "frozen", False):
-    # PyInstaller 6: _MEIPASS = _internal/ (data files), executable dir = writable root
-    _MEIPASS = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
-    ROOT = os.path.dirname(sys.executable)
-    UI_FILE = os.path.join(_MEIPASS, "ui.html")
-else:
-    HERE = os.path.dirname(os.path.abspath(__file__))
-    ROOT = os.path.dirname(HERE)
-    UI_FILE = os.path.join(ROOT, "01. FRONTEND", "ui.html")
+# Phase 1.5.1: 경로 상수는 paths.py 단일 소스에서 가져온다. 아래 이름들은
+# 기존과 동일하게 app 모듈 속성으로 유지되어 하위 참조/테스트가 깨지지 않는다.
+HERE = paths.HERE
+ROOT = paths.ROOT
+UI_FILE = paths.UI_FILE
 
-DB_DIR = os.path.join(ROOT, "02. DB")
-STATE_DIR = os.path.join(DB_DIR, "state")
-JSON_FILE = os.path.join(DB_DIR, "MAIL_db", "mailbox.json")
-USER_CONFIG_FILE = os.path.join(STATE_DIR, "user_config.json")
+DB_DIR = paths.DB_DIR                      # <ROOT>/02. DB
+STATE_DIR = paths.STATE_DIR
+JSON_FILE = paths.MAIL_JSON_FILE
+USER_CONFIG_FILE = paths.USER_CONFIG_FILE
 
-POS_FILE = os.path.join(STATE_DIR, "widget_pos.json")
-EXCLUDE_FILE = os.path.join(STATE_DIR, "widget_excluded.json")
-SNOOZE_FILE = os.path.join(STATE_DIR, "widget_snooze.json")
-DONE_FILE = os.path.join(STATE_DIR, "widget_done.json")
-MYTODOS_FILE = os.path.join(STATE_DIR, "widget_mytodos.json")
-MEMOS_FILE   = os.path.join(STATE_DIR, "widget_memos.json")
-TAGS_FILE    = os.path.join(STATE_DIR, "widget_tags.json")
-VIP_FILE = os.path.join(STATE_DIR, "widget_vip.json")
-IMPORTANT_FILE = os.path.join(STATE_DIR, "widget_important.json")
-NOTES_FILE = os.path.join(STATE_DIR, "widget_notes.json")
-DONE_LOG_FILE = os.path.join(STATE_DIR, "widget_done_log.json")
+POS_FILE = paths.POS_FILE
+EXCLUDE_FILE = paths.EXCLUDE_FILE
+SNOOZE_FILE = paths.SNOOZE_FILE
+DONE_FILE = paths.DONE_FILE
+MYTODOS_FILE = paths.MYTODOS_FILE
+MEMOS_FILE = paths.MEMOS_FILE
+TAGS_FILE = paths.TAGS_FILE
+VIP_FILE = paths.VIP_FILE
+IMPORTANT_FILE = paths.IMPORTANT_FILE
+NOTES_FILE = paths.NOTES_FILE
+DONE_LOG_FILE = paths.DONE_LOG_FILE
 # 숨김 시각 기록: {제목: ISO시각} — 숨김 목록을 '확인 누른 순서'(최신순)로 정렬하기 위한 보조.
 # 실제 숨김 여부는 done/excluded/snooze 가 판단하므로, 이 파일의 오래된 항목이 남아도 무해.
-HIDE_TS_FILE = os.path.join(STATE_DIR, "widget_hide_ts.json")
-# NOTE(Phase0/0.4): build_dashboard.py:25 also defines PROJECTS_FILE. Both resolve to the
-# identical absolute path — 개발 실행 시 두 모듈 모두 HERE=dirname(abspath(__file__)) (둘 다
-# "00. BACKEND"에 위치) → ROOT=dirname(HERE) → ROOT/"02. DB"/"state"/"widget_projects.json".
-# app.py는 frozen(PyInstaller) 분기에서 ROOT=dirname(sys.executable)를 쓰지만, 그 경우 실행
-# 파일이 프로젝트 루트에 놓이므로 동일 경로로 귀결됨. 단일 소스로 통합(paths.py)은 Phase 1.5로 유예.
-PROJECTS_FILE = os.path.join(STATE_DIR, "widget_projects.json")
-PROJECT_CARDS_FILE = os.path.join(STATE_DIR, "widget_project_cards.json")
+HIDE_TS_FILE = paths.HIDE_TS_FILE
+PROJECTS_FILE = paths.PROJECTS_FILE
+PROJECT_CARDS_FILE = paths.PROJECT_CARDS_FILE
 # NOTE(Phase0/0.2): 광고/스팸으로 판정된 메일을 mailbox.json에서 영구 삭제하는 대신
 # 이 숨김 휴지통으로 옮겨 복구 가능하게 함. 추가(additive) 파일 — 기존 리더는 아무도 읽지 않음.
-AD_TRASH_FILE = os.path.join(STATE_DIR, "widget_ad_trash.json")
+AD_TRASH_FILE = paths.AD_TRASH_FILE
 MAX_AGE_DAYS = getattr(config, "MAX_AGE_DAYS", 90)
 
 WIN_W, WIN_H = 360, 740
@@ -400,7 +392,7 @@ def _prep_view(data):
     table = data.get("table", [])
 
     # 미회신: 회신 대기 스레드 중 내부(사내 도메인) 발신자 제외, 경과일 desc 정렬
-    _internal_domain = getattr(build_dashboard, "INTERNAL_DOMAIN", "")
+    _internal_domain = build_dashboard.get_internal_domain()
     replies = [t for t in threads
                if t.get("상태") == "회신 대기"
                and (not _internal_domain
@@ -658,7 +650,7 @@ class Api:
                        | {_norm(t.get("제목", "")) for t in todos}
                        | {_norm(t.get("제목", "")) for t in replies})
         _hidden_all_norm = done_norm | excluded_norm | snoozed_norm
-        _intdom = getattr(build_dashboard, "INTERNAL_DOMAIN", "")
+        _intdom = build_dashboard.get_internal_domain()
         only_internal, only_mentioned, only_reply = [], [], []
         for _t in data.get("threads", []):
             if _t.get("최근방향") != "받음":     # 받은메일이 마지막인 스레드만 (보낸/회신완료 제외)
@@ -1399,13 +1391,9 @@ def _parse_group_list(raw):
 
 
 def _load_user_config():
-    try:
-        if os.path.exists(USER_CONFIG_FILE):
-            with open(USER_CONFIG_FILE, encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
+    # Phase 1.5.2: user_config.json 로더 단일화 — build_dashboard._load_user_config 을
+    # 단일 소스로 사용한다 (우선순위: user_config.json > config.py). on-disk 포맷 불변.
+    return build_dashboard._load_user_config()
 
 def _apply_user_config():
     for k, v in _load_user_config().items():

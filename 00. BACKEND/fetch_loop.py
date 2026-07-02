@@ -13,13 +13,15 @@ from datetime import timedelta, date
 
 import fetch_mail
 import build_dashboard
+import paths
 
 INTERVAL_SEC = 30 * 60  # 30분
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-STATE_DIR = os.path.join(ROOT, "02. DB", "state")
-REPORT_STATE_FILE = os.path.join(STATE_DIR, "widget_report_state.json")
+# Phase 1.5.1: 경로 상수는 paths.py 단일 소스에서 가져온다 (기존 이름 유지).
+HERE = paths.HERE
+ROOT = paths.ROOT
+STATE_DIR = paths.STATE_DIR
+REPORT_STATE_FILE = paths.REPORT_STATE_FILE
 
 
 def _this_week_monday():

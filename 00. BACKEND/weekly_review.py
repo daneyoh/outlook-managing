@@ -14,16 +14,20 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 import build_dashboard
+# Phase 1.5.2: MY_EMAIL 은 import 시점에 값을 캡처하는 value-binding import 였으나,
+# MY_EMAIL 이 LIVE accessor(build_dashboard.get_my_email)로 바뀌면서 이 모듈이
+# stale(또는 함수 객체) 바인딩을 붙잡지 않도록 import 목록에서 제거한다. 필요 시
+# build_dashboard.get_my_email() 로 LIVE 값을 얻는다 (현재 이 모듈 본문 미사용).
 from build_dashboard import (
     load, norm_subject, fmt_date, project_of, load_project_rules,
-    MY_EMAIL, _parse_dt,
+    _parse_dt,
 )
 
-import sys as _sys
-HERE = (os.path.dirname(_sys.executable) if getattr(_sys, "frozen", False)
-        else os.path.dirname(os.path.abspath(__file__)))
-ROOT = os.path.dirname(HERE)                       # 프로젝트 루트 (backend의 부모)
-REVIEW_OUT_FILE = os.path.join(ROOT, "01. FRONTEND", "weekly_review.html")
+import paths
+# Phase 1.5.1: 경로 상수는 paths.py 단일 소스에서 가져온다 (기존 이름 유지).
+HERE = paths.HERE
+ROOT = paths.ROOT                                  # 프로젝트 루트 (backend의 부모)
+REVIEW_OUT_FILE = paths.WEEKLY_REVIEW_OUT_FILE
 
 # JARVIS/dark — ui.html 의 색 언어 재사용 (deep black / cyan accent / off-white)
 REVIEW_TEMPLATE = """<!doctype html>
