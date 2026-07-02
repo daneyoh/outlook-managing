@@ -38,7 +38,6 @@ FRONTEND_DIR = os.path.join(ROOT, "01. FRONTEND")
 
 # --- 메일 데이터 파일 ---
 MAIL_JSON_FILE = os.path.join(MAIL_DB_DIR, "mailbox.json")
-MAIL_CSV_FILE = os.path.join(MAIL_DB_DIR, "mailbox.csv")
 ARCHIVE_FILE = os.path.join(MAIL_DB_DIR, "mailbox_archive.json")
 
 # --- 캐시 / 로그 ---

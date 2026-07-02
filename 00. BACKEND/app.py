@@ -300,7 +300,9 @@ def _next_memo_id(items):
     return str(mx + 1)
 
 
-# --- VIP 발신자 로드/저장 (widget_vip.json) — 소문자 이메일 리스트 -----------
+# --- VIP 발신자 로드 (widget_vip.json) — 소문자 이메일 리스트 -----------------
+# 읽기 전용: get_view 가 VIP 정렬·강조에 사용한다. 추가/삭제 UI(관리 폼)는
+# 미구현(도달 불가)이라 제거됨 — VIP 목록은 widget_vip.json 을 직접 편집해 관리한다.
 
 def _load_vip():
     try:
@@ -309,14 +311,6 @@ def _load_vip():
         return [str(e).lower() for e in data] if isinstance(data, list) else []
     except (OSError, ValueError, json.JSONDecodeError):
         return []
-
-
-def _save_vip(items):
-    try:
-        state_io.write_json(VIP_FILE, sorted(set(items)))
-        return True
-    except Exception:
-        return False
 
 
 # --- 메일별 메모 로드/저장 (widget_notes.json) — {제목: 메모문자열} ---
@@ -1036,25 +1030,6 @@ class Api:
         _touch_hide_ts(key)
         return {"ok": True}
 
-    # --- VIP 발신자 조회/추가/삭제 (Feature 3) ---
-    def get_vip(self):
-        return _load_vip()
-
-    def add_vip(self, email):
-        email = (email or "").strip().lower()
-        if not email:
-            return {"ok": False}
-        vips = _load_vip()
-        if email not in vips:
-            vips.append(email)
-            _save_vip(vips)
-        return {"ok": True}
-
-    def del_vip(self, email):
-        email = (email or "").strip().lower()
-        vips = [v for v in _load_vip() if v != email]
-        _save_vip(vips)
-        return {"ok": True}
 
     # --- 중요(★) 메일 토글: widget_important.json (제목 집합) ---
     def toggle_important(self, key):

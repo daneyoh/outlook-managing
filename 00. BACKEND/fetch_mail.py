@@ -10,10 +10,9 @@
 #     - 작업 스케줄러용. 저장된 토큰만 사용하고,
 #       토큰이 없으면 로그인 창을 띄우지 않고 조용히 종료합니다.
 #
-#  결과는 mailbox.json / mailbox.csv 에 누적되며 중복은 자동 제거됩니다.
+#  결과는 mailbox.json 에 누적되며 중복은 자동 제거됩니다.
 # ============================================================
 
-import csv
 import json
 import os
 import re
@@ -23,7 +22,6 @@ from datetime import datetime
 import msal
 import requests
 
-import config as _config
 import config
 import paths
 
@@ -42,8 +40,8 @@ def _load_user_cfg_early():
 for _k, _v in _load_user_cfg_early().items():
     setattr(config, _k, _v)
 
-_FETCH_FULL_BODY = getattr(_config, "FETCH_FULL_BODY", False)
-_BODY_MAX_CHARS  = getattr(_config, "BODY_MAX_CHARS", 10000)
+_FETCH_FULL_BODY = getattr(config, "FETCH_FULL_BODY", False)
+_BODY_MAX_CHARS  = getattr(config, "BODY_MAX_CHARS", 10000)
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 AUTHORITY = f"https://login.microsoftonline.com/{config.TENANT_ID}"
@@ -62,11 +60,7 @@ os.makedirs(STATE_DIR, exist_ok=True)
 CACHE_FILE = paths.CACHE_FILE
 MY_GROUPS_FILE = paths.MY_GROUPS_FILE
 JSON_FILE = paths.MAIL_JSON_FILE
-CSV_FILE = paths.MAIL_CSV_FILE
 LOG_FILE = paths.LOG_FILE
-
-FIELDS = ["구분", "날짜", "보낸사람", "받는사람", "참조", "제목",
-          "본문요약", "읽음", "첨부", "중요도", "링크"]
 
 
 def log(msg):
@@ -241,7 +235,7 @@ def fetch_all_received(token, count):
         msgs = [m for m in msgs if m.get("parentFolderId") not in exclude_ids]
 
     # 보낸메일(sentitems에서 별도 수집)은 제외 — 중복 방지
-    my_email = getattr(_config, "MY_EMAIL", "").lower()
+    my_email = getattr(config, "MY_EMAIL", "").lower()
     if my_email:
         msgs = [m for m in msgs
                 if (m.get("from") or {}).get("emailAddress", {}).get("address", "").lower() != my_email]
@@ -436,12 +430,6 @@ def main(auto=None):
     import state_io
     with state_io.lock(JSON_FILE):
         state_io.write_json(JSON_FILE, rows)
-
-    # CSV 저장 (확인용) — id 제외
-    with open(CSV_FILE, "w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDS, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
 
     log(f"수집 완료: 받은 {len(inbox)} / 보낸 {len(sent)}건 조회, "
         f"신규 {new_count}건 추가, 누적 총 {len(rows)}건.")
