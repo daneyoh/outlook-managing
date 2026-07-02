@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 import build_dashboard
 import config
 import paths
+import rules
 import state_io
 
 # OS 토스트 알림 (Windows). 없으면 조용히 비활성화.
@@ -66,13 +67,14 @@ MAX_AGE_DAYS = getattr(config, "MAX_AGE_DAYS", 90)
 WIN_W, WIN_H = 360, 740
 SNOOZE_DAYS = getattr(config, "SNOOZE_DEFAULT_DAYS", 3)
 
-# 긴급/마감 강조 키워드 (widget.py 와 동일)
-URGENT_KEYWORDS = ["마감", "긴급", "urgent", "asap"]
+# 긴급/마감 강조 키워드 — Phase 2.2: 단일 소스는 rules.URGENT_KEYWORDS.
+# 하위 참조/테스트 호환을 위해 이름은 유지하되 rules 를 가리킨다.
+URGENT_KEYWORDS = rules.URGENT_KEYWORDS
 
 
 def _is_urgent(title, summary):
-    text = (str(title) + " " + str(summary)).lower()
-    return any(k in text for k in URGENT_KEYWORDS)
+    # Phase 2.2: 판정 로직은 rules.is_urgent 단일 소스로 위임.
+    return rules.is_urgent(title, summary)
 
 
 # 제목 맨 앞 '광고' 머리표 제거: (광고)·[광고]·【광고】 + 분리자 동반 바 '광고'
@@ -678,7 +680,7 @@ class Api:
             }
             if _t.get("상태") in ("회신 대기", "확인 필요"):   # 내가 회신/확인해야 하나 홈에 안 뜬 것
                 only_reply.append(_item)
-            elif _intdom and _intdom in _addr.lower():         # 사내발 참조/기타
+            elif rules.is_from_internal(_addr, _intdom):       # 사내발 참조/기타 (Phase 2.2 단일 소스)
                 only_internal.append(_item)
             else:                                               # 외부발 참조/기타
                 only_mentioned.append(_item)

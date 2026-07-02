@@ -15,6 +15,7 @@ import re
 import state_io
 import config as _cfg
 import paths
+import rules
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -123,13 +124,9 @@ def _is_to_me(to_field):
         return True
     return any(g in tf for g in _my_group_addrs())
 
-# 처리 필요(액션) 신호 키워드
-ACTION_KEYWORDS = [
-    "요청", "부탁", "검토", "확인", "회신", "답장", "회답", "마감", "기한",
-    "까지", "제출", "전달", "공유", "승인", "결재", "피드백", "수정", "보완",
-    "필요", "협조", "문의", "답변", "리뷰", "asap", "please", "review",
-    "request", "deadline", "urgent", "확인부탁", "회신바랍니다",
-]
+# 처리 필요(액션) 신호 키워드 — Phase 2.2: 단일 소스는 rules.ACTION_KEYWORDS.
+# 하위 참조/테스트 호환을 위해 이름은 유지하되 rules 를 가리킨다.
+ACTION_KEYWORDS = rules.ACTION_KEYWORDS
 
 
 def load():
@@ -183,8 +180,8 @@ def fmt_date(s):
 
 
 def has_action(row):
-    text = (row.get("제목", "") + " " + row.get("본문요약", "")).lower()
-    return any(k.lower() in text for k in ACTION_KEYWORDS)
+    # Phase 2.2: 판정 로직은 rules.has_action 단일 소스로 위임 (row → title+summary).
+    return rules.has_action(row.get("제목", ""), row.get("본문요약", ""))
 
 
 # 마감일 cue: 이 단어가 근처에 있을 때만 날짜를 마감으로 인정 (오탐 방지)
@@ -410,14 +407,8 @@ def build_data():
     # 단, 내가 이미 회신한 대화(스레드의 최신 메일이 보낸메일)는 TODO에서 제외한다.
 
     # 스레드(정규화 제목)별 최신 메일 방향 — 내가 마지막에 보냈으면 회신 완료로 본다.
-    _latest_date, _latest_dir = {}, {}
-    for r in rows_union:
-        k = norm_subject(r.get("제목", "")) or r.get("제목", "")
-        dt = r.get("날짜", "") or ""
-        if k not in _latest_date or dt > _latest_date[k]:
-            _latest_date[k] = dt
-            _latest_dir[k] = r.get("구분", "")
-    replied_threads = {k for k, dirn in _latest_dir.items() if dirn == "보낸메일"}
+    # Phase 2.2: 판정 로직은 rules.replied_thread_keys 단일 소스로 위임(norm_subject 주입).
+    replied_threads = rules.replied_thread_keys(rows_union, norm_subject)
     # 같은 대화(제목 정규화 기준)는 하나로 묶는다: 가장 최근 메일을 대표로,
     # 미읽음은 그룹 내 하나라도 있으면 유지(놓침 방지), 건수로 묶인 개수를 표시한다.
     todo_groups = {}
@@ -426,7 +417,10 @@ def build_data():
         to_field = (r.get("받는사람", "") or "").lower()
         body = (r.get("제목", "") or "") + " " + (r.get("본문요약", "") or "")
         _internal_domain = get_internal_domain()
-        is_internal = bool(_internal_domain) and _internal_domain in from_field
+        # Phase 2.2: 사내발 판정은 rules.is_from_internal 단일 소스로 위임.
+        # (from_field 는 이미 lower() 된 값이며, rules 도 내부에서 lower() 를 적용해
+        #  기존 표현식과 동일하다.)
+        is_internal = rules.is_from_internal(from_field, _internal_domain)
         to_me = _is_to_me(to_field)   # 내 주소 또는 소속 그룹 주소 수신 포함
         _my_name = get_my_name()
         name_match = bool(_my_name) and _my_name in body
@@ -454,7 +448,8 @@ def build_data():
                 "내부여부": is_internal,
                 "to_me": to_me,
                 # 참조요청: To 수신자는 내가 아닌데 본문이 날 콕 집은 경우 → 은은한 강조 대상
-                "참조요청": (not to_me) and name_match,
+                # Phase 2.2: 판정은 rules.is_external_request 단일 소스로 위임.
+                "참조요청": rules.is_external_request(is_internal, to_me, name_match),
                 "건수": (g["건수"] if g else 0) + 1,
             }
         else:

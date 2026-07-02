@@ -7,27 +7,35 @@ reason." These are recorded here (skipped, not deleted/ignored silently) so Phas
 extraction work has an explicit paper trail and a place to land real tests once a seam
 exists.
 """
+import os
+import sys
+
 import pytest
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "00. BACKEND"))
+import rules  # noqa: E402
+import build_dashboard as bd  # noqa: E402
 
-# TODO Phase 2: "replied / 내가 답한 detection" — currently computed as
-# `replied_threads` inline inside build_dashboard.build_data() (build_dashboard.py:
-# ~347-355): a dict comprehension over `rows_union` that tracks, per normalized-subject
-# thread key, whether the LATEST message in that thread was sent by me (구분 ==
-# "보낸메일"). This logic is not exposed as a standalone function — it is a local
-# variable built inline in the middle of a 270-line function, using two other locals
-# (_latest_date, _latest_dir) that are themselves built in the same loop. There is no
-# seam to call in isolation without either (a) refactoring build_data() to extract it
-# (out of scope this phase) or (b) running the entire build_data() pipeline against a
-# real/fixture mailbox.json + archive file (a much heavier integration test than a
-# Phase-1 pure-function characterization test, and arguably belongs in Phase 2 once
-# the extraction creates a real seam to characterize against).
-@pytest.mark.skip(reason="No standalone callable seam for 'replied/내가 답한' detection "
-                          "today — it is inline in build_dashboard.build_data() "
-                          "(build_dashboard.py:~347-355). Extracting a seam is Phase 2 "
-                          "work (see rules.py consolidation); do not refactor here.")
-def test_replied_thread_detection_placeholder():
-    ...
+
+# RESOLVED in Phase 2.2: "replied / 내가 답한 detection" previously had no callable seam
+# (it was inline in build_dashboard.build_data() as the `replied_threads` local). Phase
+# 2.2 extracted it to rules.replied_thread_keys(rows, norm_subject), so this documented
+# gap now lands as a real test. The extraction was proven byte-identical to the old
+# inline algorithm on the live mailbox (151 threads, new==old). rules.replied_thread_keys
+# is also characterized in test_rules_characterization.py; this test guards the seam at
+# the documented-gap location so the paper trail resolves.
+def test_replied_thread_detection_seam():
+    rows = [
+        {"제목": "RE: 프로젝트 A", "날짜": "2026-06-01", "구분": "받은메일"},
+        {"제목": "프로젝트 A", "날짜": "2026-06-02", "구분": "보낸메일"},   # latest = sent → replied
+        {"제목": "프로젝트 B", "날짜": "2026-06-03", "구분": "받은메일"},   # latest = received → not
+        {"제목": "프로젝트 B", "날짜": "2026-06-01", "구분": "보낸메일"},
+    ]
+    replied = rules.replied_thread_keys(rows, bd.norm_subject)
+    a_key = bd.norm_subject("프로젝트 A") or "프로젝트 A"
+    b_key = bd.norm_subject("프로젝트 B") or "프로젝트 B"
+    assert a_key in replied      # thread whose latest message I sent
+    assert b_key not in replied  # thread whose latest message I received
 
 
 # TODO Phase 2: "경과일 (elapsed days)" — currently computed inline inside

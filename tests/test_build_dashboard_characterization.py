@@ -298,6 +298,47 @@ class TestHasAction:
 
 
 # ---------------------------------------------------------------------------
+# _is_to_me (build_dashboard.py:117-124) — already a callable seam. Pinned here
+# per Phase 2.2 target #4 before any consolidation touches its call sites.
+# Depends on get_my_email() (LIVE accessor) and _my_group_addrs(); we monkeypatch
+# both to make the test deterministic and independent of config.py.
+# ---------------------------------------------------------------------------
+
+class TestIsToMe:
+    def test_my_email_in_to_field_true(self, monkeypatch):
+        monkeypatch.setattr(build_dashboard, "get_my_email", lambda: "me@corp.com")
+        monkeypatch.setattr(build_dashboard, "_my_group_addrs", lambda: [])
+        assert build_dashboard._is_to_me("Me@Corp.com; other@x.com") is True
+
+    def test_group_addr_in_to_field_true(self, monkeypatch):
+        monkeypatch.setattr(build_dashboard, "get_my_email", lambda: "me@corp.com")
+        monkeypatch.setattr(build_dashboard, "_my_group_addrs", lambda: ["team@corp.com"])
+        assert build_dashboard._is_to_me("team@corp.com") is True
+
+    def test_neither_present_false(self, monkeypatch):
+        monkeypatch.setattr(build_dashboard, "get_my_email", lambda: "me@corp.com")
+        monkeypatch.setattr(build_dashboard, "_my_group_addrs", lambda: ["team@corp.com"])
+        assert build_dashboard._is_to_me("stranger@x.com") is False
+
+    def test_empty_to_field_false(self, monkeypatch):
+        monkeypatch.setattr(build_dashboard, "get_my_email", lambda: "me@corp.com")
+        monkeypatch.setattr(build_dashboard, "_my_group_addrs", lambda: [])
+        assert build_dashboard._is_to_me("") is False
+
+    def test_none_to_field_false(self, monkeypatch):
+        monkeypatch.setattr(build_dashboard, "get_my_email", lambda: "me@corp.com")
+        monkeypatch.setattr(build_dashboard, "_my_group_addrs", lambda: [])
+        assert build_dashboard._is_to_me(None) is False
+
+    def test_empty_my_email_falls_through_to_groups(self, monkeypatch):
+        # bool guard: empty my_email must not match; groups still checked.
+        monkeypatch.setattr(build_dashboard, "get_my_email", lambda: "")
+        monkeypatch.setattr(build_dashboard, "_my_group_addrs", lambda: ["team@corp.com"])
+        assert build_dashboard._is_to_me("team@corp.com") is True
+        assert build_dashboard._is_to_me("me@corp.com") is False
+
+
+# ---------------------------------------------------------------------------
 # Mandatory fallback-guard case (guards Phase 1.5.2):
 # INTERNAL_DOMAIN unset + MY_EMAIL set → internal/external classification derives
 # the internal domain from MY_EMAIL's domain (the or-fallback formerly at
