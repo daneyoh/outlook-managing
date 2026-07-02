@@ -56,7 +56,10 @@ DB_BASE = os.path.join(ROOT, "02. DB")
 DB_DIR = os.path.join(DB_BASE, "MAIL_db")        # 가져온 메일 저장 폴더
 os.makedirs(DB_DIR, exist_ok=True)
 os.makedirs(os.path.join(DB_BASE, "logs"), exist_ok=True)
+STATE_DIR = os.path.join(DB_BASE, "state")
+os.makedirs(STATE_DIR, exist_ok=True)
 CACHE_FILE = os.path.join(DB_BASE, "token_cache.bin")
+MY_GROUPS_FILE = os.path.join(STATE_DIR, "widget_my_groups.json")
 JSON_FILE = os.path.join(DB_DIR, "mailbox.json")
 CSV_FILE = os.path.join(DB_DIR, "mailbox.csv")
 LOG_FILE = os.path.join(DB_BASE, "logs", "fetch_log.txt")
@@ -122,12 +125,54 @@ def get_token(auto=False):
     return result["access_token"]
 
 
+def fetch_my_groups(token):
+    """로그인 사용자가 속한 그룹들의 메일 주소 목록을 /me/memberOf 로 조회.
+    - 성공: 주소 list 반환(그룹 아닌 항목·메일 없는 항목은 제외)
+    - 권한 없음(401/403)·실패: None 반환 → 기존 캐시 유지, 앱은 수동 MY_GROUPS 로 동작.
+    ※ Azure 앱에 GroupMember.Read.All(위임) 권한 + 관리자 동의가 필요하다."""
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"{GRAPH}/me/memberOf"
+    params = {"$select": "mail,displayName", "$top": 100}
+    addrs = []
+    try:
+        while url:
+            resp = requests.get(url, headers=headers, params=params)
+            if resp.status_code in (401, 403):
+                log(f"그룹 조회 권한 없음(status {resp.status_code}). "
+                    "Azure 앱에 GroupMember.Read.All 추가 후 관리자 동의가 필요합니다.")
+                return None
+            resp.raise_for_status()
+            data = resp.json()
+            for it in data.get("value", []):
+                mail = (it.get("mail") or "").strip()
+                if mail:                       # 그룹만 mail 을 가짐(디렉터리 역할 등은 없음)
+                    addrs.append(mail)
+            url = data.get("@odata.nextLink")
+            params = None                      # nextLink 에 쿼리가 이미 포함됨
+        return addrs
+    except requests.RequestException as e:
+        log(f"그룹 조회 실패: {e}")
+        return None
+
+
 def strip_html(text):
     if not text:
         return ""
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+# 자동회신(부재중 안내 등) 제목 판정 — 이런 메일은 DB(mailbox.json)에 저장하지 않는다.
+_AUTO_REPLY_RE = re.compile(
+    r"^\s*(?:자동\s*회신|자동응답|부재중(?:\s*안내)?"
+    r"|Automatic\s*reply|Auto[- ]?Reply|Out\s*of\s*[Oo]ffice)\s*[:\-]",
+    re.IGNORECASE,
+)
+
+
+def is_auto_reply(subject):
+    return bool(_AUTO_REPLY_RE.match(subject or ""))
 
 
 _SELECT_FIELDS = (
@@ -199,6 +244,9 @@ def fetch_all_received(token, count):
     if my_email:
         msgs = [m for m in msgs
                 if (m.get("from") or {}).get("emailAddress", {}).get("address", "").lower() != my_email]
+
+    # 자동회신(부재중 안내 등)은 DB에 저장하지 않음
+    msgs = [m for m in msgs if not is_auto_reply(m.get("subject", ""))]
     return msgs
 
 
@@ -297,6 +345,22 @@ def clean_junk_from_store(token):
     return removed
 
 
+def clean_auto_reply_from_store():
+    """mailbox.json에 이미 저장된 자동회신(부재중 안내 등) 메일 제거."""
+    import state_io
+    store = load_existing()
+    before = len(store)
+    store = {k: v for k, v in store.items() if not is_auto_reply(v.get("제목", ""))}
+    removed = before - len(store)
+
+    if removed > 0:
+        rows = sorted(store.values(), key=lambda r: r.get("날짜", ""), reverse=True)
+        with state_io.lock(JSON_FILE):
+            state_io.write_json(JSON_FILE, rows)
+        log(f"자동회신 메일 {removed}건 mailbox.json에서 제거 완료.")
+    return removed
+
+
 def main(auto=None):
     if auto is None:
         auto = "--auto" in sys.argv
@@ -309,7 +373,19 @@ def main(auto=None):
     if token is None:
         return {"ok": False, "auth_required": True, "new": 0, "msg": "인증 필요"}
 
+    # 내가 속한 그룹 주소 자동 조회 → 캐시 (권한 없으면 조용히 건너뜀, 기존 캐시 유지)
+    try:
+        import state_io
+        groups = fetch_my_groups(token)
+        if groups is not None:
+            with state_io.lock(MY_GROUPS_FILE):
+                state_io.write_json(MY_GROUPS_FILE, groups)
+            log(f"소속 그룹 {len(groups)}개 조회/저장.")
+    except Exception as e:
+        log(f"그룹 조회 중 오류(무시): {e}")
+
     clean_junk_from_store(token)
+    clean_auto_reply_from_store()
     inbox = fetch_all_received(token, config.MAX_EMAILS)
     sent = fetch_folder(token, "sentitems", config.MAX_EMAILS)
 

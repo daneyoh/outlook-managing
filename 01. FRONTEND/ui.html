@@ -660,6 +660,22 @@
       contain-intrinsic-size: auto 44px;
     }
 
+    /* 확인(완료) 클릭 시 왼쪽으로 휙 밀려나며 사라지는 애니메이션 */
+    @keyframes rowSwipeLeft {
+      0%   { transform: translateX(0);      opacity: 1; }
+      55%  { transform: translateX(-115%);  opacity: 0; }
+      100% { transform: translateX(-115%);  opacity: 0;
+             max-height: 0; margin-top: 0; margin-bottom: 0;
+             padding-top: 0; padding-bottom: 0; border-width: 0; }
+    }
+    .row.swipe-out,
+    .hidden-item.swipe-out {
+      animation: rowSwipeLeft .34s cubic-bezier(.55, 0, .35, 1) forwards;
+      pointer-events: none;
+      overflow: hidden;
+      content-visibility: visible; /* 애니메이션 중엔 레이아웃 스킵 해제 */
+    }
+
     .row:hover {
       background: var(--soft);
       padding: 10px 12px;
@@ -1193,6 +1209,20 @@
       transform: scale(.96);
     }
 
+    .urgent-strip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--c-reply, #d93025);
+      background: rgba(217, 48, 37, .06);
+      border: 1px solid rgba(217, 48, 37, .2);
+      border-radius: var(--r-pill);
+      padding: 8px 12px;
+      margin-bottom: 14px;
+    }
+    .urgent-strip .icon { width: 15px; height: 15px; }
+
     .viprow,
     .rulerow {
       display: flex;
@@ -1418,9 +1448,6 @@
       <div class="navitem" data-v="프로젝트"><svg class="icon">
           <use href="#ph-folder-open" />
         </svg><span class="lb">프로젝트</span></div>
-      <div class="navitem" data-v="통계"><svg class="icon">
-          <use href="#ph-chart-bar" />
-        </svg><span class="lb">통계</span></div>
       <div class="navitem" data-v="전체"><svg class="icon">
           <use href="#ph-list" />
         </svg><span class="lb">전체</span></div>
@@ -1558,7 +1585,8 @@
       var sub2 = o.sub2 ? '<div class="s2">' + esc(o.sub2) + '</div>' : "";
       var memo = o.note ? '<div class="memo">' + icon('ph-pencil-simple') + ' ' + esc(o.note) + '</div>' : "";
       var link = o.link ? ' data-link="' + esc(o.link) + '"' : "";
-      var pill = (o.delayHtml != null ? o.delayHtml : "")
+      var pill = (o.urgent ? '<span class="dl dl-red">긴급</span>' : "")
+        + (o.delayHtml != null ? o.delayHtml : "")
         + (o.dlDays != null ? dlPill(o.dlDays) : "")
         + (o.ageDays != null ? agePill(o.ageDays) : "");
       var rowCls = "row" + (o.vip ? " vip" : "") + (o.refReq ? " ref-req" : "");
@@ -1659,7 +1687,6 @@
 
       var html = "";
       if (state.view === "프로젝트") html = renderProjects(d);
-      else if (state.view === "통계") html = renderStats(d);
       else if (state.view === "전체") html = renderAll(d);
       else if (state.view === "설정") { renderSettingsAsync(); return; }
       else html = renderHome(d);
@@ -1667,7 +1694,7 @@
       document.getElementById("body").innerHTML = html;
       document.getElementById("body").scrollTop = 0;
       document.getElementById("status").textContent = "갱신 " + (d.갱신시각 || "-");
-      if (state.view === "통계") drawCharts(d);
+      if (document.getElementById("ch-delay")) drawCharts(d);
       if (state.view === "전체" && state.hiddenOpen) loadHidden();
     }
 
@@ -1676,7 +1703,6 @@
       if (state.filter === "외부요청") return html + renderTodoOnly(d, false);
       if (state.filter === "사내") return html + renderTodoOnly(d, true);
       if (state.filter === "미회신") return html + renderRepliesOnly(d);
-      if (state.filter === "긴급") return html + renderUrgentOnly(d);
       return html + renderDefault(d);
     }
 
@@ -1754,7 +1780,7 @@
     // 단일 TODO 행 — 본문에 내 이름이 있는데 To 수신자가 내가 아니면(참조요청) 은은한 강조
     function todoRow(t) {
       var cnt = (t.건수 && t.건수 > 1) ? " · " + t.건수 + "건" : "";
-      return rowHtml({ title: t.제목, unread: t.미읽음, vip: t.vip, important: t.중요, bold: agingBold(elapsedDays(t)), sub: (t.보낸사람 || "") + " · " + (t.날짜 || "") + cnt, sub2: trunc(t.요약, 120), link: t.링크, delayHtml: delayPill(t), dlDays: upcomingDl(t), progressDays: elapsedDays(t), note: t.메모, importantKey: t.제목, doneKey: t.제목, noteKey: t.제목, snoozeKey: t.제목, loop: t.루프, senderEmail: t.보낸사람 || null, senderName: t.보낸사람 || null, refReq: !!t.참조요청 });
+      return rowHtml({ title: t.제목, unread: t.미읽음, vip: t.vip, important: t.중요, bold: agingBold(elapsedDays(t)), sub: (t.보낸사람 || "") + " · " + (t.날짜 || "") + cnt, sub2: trunc(t.요약, 120), link: t.링크, delayHtml: delayPill(t), dlDays: upcomingDl(t), progressDays: elapsedDays(t), note: t.메모, importantKey: t.제목, doneKey: t.제목, noteKey: t.제목, snoozeKey: t.제목, loop: t.루프, senderEmail: t.보낸사람 || null, senderName: t.보낸사람 || null, refReq: !!t.참조요청, urgent: !!t.긴급 });
     }
 
     // isInternal=true면 사내(내부 도메인 발신자), false면 외부(To는 내가 아니지만 본문에 나를 언급 = 참조요청)
@@ -1776,20 +1802,15 @@
       return html;
     }
 
+    // 기본 홈(카드 미선택): 긴급은 각 분류 카드에 긴급 pill 로 표시되므로, 랜딩은 통계 차트를 보여준다.
     function renderDefault(d) {
-      var html = renderTodoGroup(d, false) + renderTodoGroup(d, true);
-
-      var urgent = applyQ(d.urgent.filter(function (t) { return matches(t.제목, t.보낸사람); }));
-      if (urgent.length) {
-        html += secHtml("긴급 / 마감", "red");
-        urgent.forEach(function (t) { html += rowHtml({ title: t.제목, unread: t.미읽음, vip: t.vip, important: t.중요, sub: (t.보낸사람 || "") + " · " + (t.날짜 || ""), link: t.링크, delayHtml: delayPill(t), note: t.메모, importantKey: t.제목, doneKey: t.제목, noteKey: t.제목, snoozeKey: t.제목, loop: t.루프, senderEmail: t.보낸사람 || null, senderName: t.보낸사람 || null }); });
-      }
-
-      html += secHtml("미회신건 · 회신 대기", "amber");
-      var replies = applySort(applyQ(d.replies.filter(function (t) { return matches(t.제목); })));
-      if (replies.length)
-        replies.forEach(function (t) { html += rowHtml({ title: t.제목, sub: replySub(t), sub2: trunc(t.요약, 120), link: t.링크, vip: t.vip, important: t.중요, bold: agingBold(t.경과일), delayHtml: delayPill(t), dlDays: upcomingDl(t), note: t.메모, importantKey: t.제목, doneKey: t.제목, noteKey: t.제목, snoozeKey: t.제목, loop: t.루프, progressDays: elapsedDays(t), senderEmail: t.보낸사람 || null, senderName: t.답장주소 || t.보낸사람 || null }); });
-      else html += emptyHtml("회신 대기 항목이 없습니다.");
+      var n = (d.counts && d.counts.긴급) || 0;
+      var html = '<div class="urgent-strip">' + icon('ph-warning') + ' 긴급 ' + n + '건 · 각 분류(To Reply · Mentioned · Internal)에 표시됨</div>';
+      var rows = delayRows(d);
+      html += secHtml("미회신 지연 건별 (상위 " + rows.length + ")", "red");
+      if (rows.length)
+        html += '<div class="chart"><canvas id="ch-delay" width="320" height="' + (rows.length * 28 + 12) + '"></canvas></div>';
+      else html += emptyHtml("미회신 항목이 없습니다.");
       return html;
     }
 
@@ -1801,19 +1822,11 @@
       var html = secHtml("미회신건 · 회신 대기", "red");
       var replies = applySort(applyQ(d.replies.filter(function (t) { return matches(t.제목); })));
       if (replies.length)
-        replies.forEach(function (t) { html += rowHtml({ title: t.제목, sub: replySub(t), sub2: trunc(t.요약, 120), link: t.링크, vip: t.vip, important: t.중요, bold: agingBold(t.경과일), delayHtml: delayPill(t), dlDays: upcomingDl(t), note: t.메모, importantKey: t.제목, doneKey: t.제목, noteKey: t.제목, snoozeKey: t.제목, loop: t.루프, progressDays: elapsedDays(t), senderName: t.답장주소 || t.보낸사람 || null }); });
+        replies.forEach(function (t) { html += rowHtml({ title: t.제목, sub: replySub(t), sub2: trunc(t.요약, 120), link: t.링크, vip: t.vip, important: t.중요, bold: agingBold(t.경과일), delayHtml: delayPill(t), dlDays: upcomingDl(t), note: t.메모, importantKey: t.제목, doneKey: t.제목, noteKey: t.제목, snoozeKey: t.제목, loop: t.루프, progressDays: elapsedDays(t), senderName: t.답장주소 || t.보낸사람 || null, urgent: !!t.긴급 }); });
       else html += emptyHtml("회신 대기 항목이 없습니다.");
       return html;
     }
 
-    function renderUrgentOnly(d) {
-      var html = secHtml("긴급 / 마감", "red");
-      var urgent = applyQ(d.urgent.filter(function (t) { return matches(t.제목, t.보낸사람); }));
-      if (urgent.length)
-        urgent.forEach(function (t) { html += rowHtml({ title: t.제목, unread: t.미읽음, vip: t.vip, important: t.중요, sub: (t.보낸사람 || "") + " · " + (t.날짜 || ""), link: t.링크, delayHtml: delayPill(t), note: t.메모, importantKey: t.제목, doneKey: t.제목, noteKey: t.제목, snoozeKey: t.제목, loop: t.루프, senderName: t.보낸사람 || null }); });
-      else html += emptyHtml("긴급 항목이 없습니다.");
-      return html;
-    }
 
     function projectCreateHtml() {
       var html = secHtml("프로젝트 만들기", "blue");
@@ -1953,10 +1966,16 @@
       var tab = state.allTab;
       var list = tab === "보낸메일" ? sent : received;
 
-      var html = '<div style="display:flex;gap:6px;margin-bottom:10px;align-items:center;">'
+      var oa = d.only_all || { internal: [], mentioned: [], reply: [] };
+      var uncat = (oa.internal || []).length + (oa.mentioned || []).length + (oa.reply || []).length;
+
+      var html = '<div style="display:flex;gap:6px;margin-bottom:10px;align-items:center;flex-wrap:wrap;">'
         + '<button class="fchip' + (tab === "받은메일" ? " on" : "") + '" data-act="alltab" data-tab="받은메일">받은메일 (' + received.length + ')</button>'
         + '<button class="fchip' + (tab === "보낸메일" ? " on" : "") + '" data-act="alltab" data-tab="보낸메일">보낸메일 (' + sent.length + ')</button>'
-        + '<button class="fchip' + (state.hiddenOpen ? " on" : "") + '" id="hiddentoggle" data-act="toggle-hidden" style="margin-left:auto;white-space:nowrap;">'
+        + '<button class="fchip' + (tab === "미분류" ? " on" : "") + '" data-act="alltab" data-tab="미분류" title="홈 섹션에 안 뜨고 전체에만 있는 받은메일">미분류 (' + uncat + ')</button>'
+        + '<button class="rpt-btn" data-act="report" style="margin-left:auto;">' + icon('ph-file-text') + ' 주간 리포트</button>'
+        + '<button class="rpt-btn" data-act="review">' + icon('ph-calendar-blank') + ' 주간 회고</button>'
+        + '<button class="fchip' + (state.hiddenOpen ? " on" : "") + '" id="hiddentoggle" data-act="toggle-hidden" style="white-space:nowrap;">'
         + (state.hiddenOpen ? "숨긴 항목 닫기 ▴" : "전체에서 숨긴 항목 보기 ▾") + '</button>'
         + '</div>'
         + '<div id="hidden-panel"' + (state.hiddenOpen ? ' class="on"' : '') + '></div>';
@@ -1980,6 +1999,26 @@
           + '</div></div>'
           + '<div class="rowactions"><div class="btns">' + btns + '</div></div>'
           + '</div>';
+      }
+
+      if (tab === "미분류") {
+        // 홈 액션 섹션에 안 뜨고 전체에만 있는 받은메일 → 3분류
+        function oaSection(title, cls, arr) {
+          var h = secHtml(title, cls);
+          var items = applyQ((arr || []).filter(function (t) { return matches(t.제목, t.보낸사람, t.요약); }));
+          if (items.length) items.forEach(function (t) {
+            h += rowHtml({ title: t.제목, sub: (t.보낸사람 || "") + " · " + (t.날짜 || ""), sub2: trunc(t.요약, 120),
+              unread: t.미읽음, link: t.링크, vip: t.vip, important: t.중요, note: t.메모,
+              importantKey: t.제목, doneKey: t.제목, noteKey: t.제목, snoozeKey: t.제목, loop: t.루프,
+              senderEmail: t.보낸사람 || null, senderName: t.보낸사람 || null, urgent: !!t.긴급 });
+          });
+          else h += emptyHtml(title + " 항목이 없습니다.");
+          return h;
+        }
+        html += oaSection("Internal (사내)", "blue", oa.internal);
+        html += oaSection("Mentioned (참조)", "amber", oa.mentioned);
+        html += oaSection("미회신 (회신·확인 대기)", "red", oa.reply);
+        return html;
       }
 
       if (list.length) list.slice(0, CAP).forEach(function (r) { html += mailRow(r); });
@@ -2017,6 +2056,8 @@
           + '<input class="fld" id="cfg-my-email" type="email" placeholder="me@company.com" value="' + esc(cfg.my_email || '') + '"></div>'
           + '<div class="ef-row"><span class="ef-label">내 이름</span>'
           + '<input class="fld" id="cfg-my-name" type="text" placeholder="홍길동 (본문에 이 이름이 있으면 TODO로 수집)" value="' + esc(cfg.my_name || '') + '"></div>'
+          + '<div class="ef-row"><span class="ef-label">내 소속 그룹</span>'
+          + '<input class="fld" id="cfg-my-groups" type="text" placeholder="all_msl@mslifix.co.kr, team@... (쉼표로 구분, 이 그룹 메일도 내 담당으로)" value="' + esc((cfg.my_groups || []).join(', ')) + '"></div>'
           + '<div class="ef-row"><span class="ef-label">최대 수집 수</span>'
           + '<input class="fld" id="cfg-max-emails" type="number" min="10" max="500" value="' + esc(String(cfg.max_emails || 50)) + '"></div>'
           + '<div class="ef-row" style="margin-top:12px;justify-content:flex-end;">'
@@ -2029,6 +2070,7 @@
             tenant_id:  (document.getElementById("cfg-tenant-id") || {}).value || "",
             my_email:   (document.getElementById("cfg-my-email") || {}).value || "",
             my_name:    (document.getElementById("cfg-my-name") || {}).value || "",
+            my_groups:  (document.getElementById("cfg-my-groups") || {}).value || "",
             max_emails: parseInt((document.getElementById("cfg-max-emails") || {}).value) || 50,
           };
           var saveApi = window.pywebview && window.pywebview.api;
@@ -2038,18 +2080,6 @@
           });
         });
       });
-    }
-
-    function renderStats(d) {
-      var html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">'
-        + '<button class="rpt-btn" data-act="report">' + icon('ph-file-text') + ' 주간 리포트</button>'
-        + '<button class="rpt-btn" data-act="review">' + icon('ph-calendar-blank') + ' 주간 회고</button></div>';
-      var rows = delayRows(d);
-      html += secHtml("미회신 지연 건별 (상위 " + rows.length + ")", "red");
-      if (rows.length)
-        html += '<div class="chart"><canvas id="ch-delay" width="320" height="' + (rows.length * 28 + 12) + '"></canvas></div>';
-      else html += emptyHtml("미회신 항목이 없습니다.");
-      return html;
     }
 
     var CHART_COL = { ink: "#37352f", sub: "#adadb8", red: "#d93025", amber: "#f29900", blue: "#2383e2" };
@@ -2268,7 +2298,19 @@
       }
       if (act === "unhide") {
         var uhKey = btn.getAttribute("data-key"), uhKind = btn.getAttribute("data-kind");
-        if (api.unhide) api.unhide(uhKey, uhKind).then(function () { loadHidden(); refresh(); });
+        if (!api.unhide) return;
+        var hitem = btn.closest(".hidden-item");
+        var doUnhide = function () { api.unhide(uhKey, uhKind).then(function () { loadHidden(); refresh(); }); };
+        if (hitem) {
+          hitem.style.maxHeight = hitem.offsetHeight + "px";
+          hitem.classList.add("swipe-out");
+          var udone = false;
+          var urun = function () { if (udone) return; udone = true; doUnhide(); };
+          hitem.addEventListener("animationend", urun, { once: true });
+          setTimeout(urun, 400); // 애니메이션 이벤트 누락 대비 폴백
+        } else {
+          doUnhide();
+        }
         return;
       }
       if (act === "hidedel") {
@@ -2382,7 +2424,21 @@
       }
       var key = btn.getAttribute("data-key");
       if (act === "important") { if (api.toggle_important) api.toggle_important(key).then(refresh); return; }
-      if (act === "done") { api.mark_done(key).then(refresh); removeKeyOptimistic(key); return; }
+      if (act === "done") {
+        var row = btn.closest(".row");
+        var finish = function () { api.mark_done(key).then(refresh); removeKeyOptimistic(key); };
+        if (row) {
+          row.style.maxHeight = row.offsetHeight + "px";
+          row.classList.add("swipe-out");
+          var done = false;
+          var run = function () { if (done) return; done = true; finish(); };
+          row.addEventListener("animationend", run, { once: true });
+          setTimeout(run, 400); // 애니메이션 이벤트 누락 대비 폴백
+        } else {
+          finish();
+        }
+        return;
+      }
     }
 
 

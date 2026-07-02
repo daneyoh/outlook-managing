@@ -34,6 +34,47 @@ MY_NAME = getattr(_cfg, "MY_NAME", "")
 INTERNAL_DOMAIN = (getattr(_cfg, "INTERNAL_DOMAIN", "").lower() or
                    (MY_EMAIL.split("@")[-1].lower() if "@" in MY_EMAIL else ""))
 
+
+# 자동 조회한 소속 그룹 주소 캐시 (fetch_mail 이 /me/memberOf 로 채움)
+AUTO_GROUPS_FILE = os.path.join(ROOT, "02. DB", "state", "widget_my_groups.json")
+
+
+def _load_auto_groups():
+    """fetch_mail 이 저장한 자동 조회 그룹 주소 목록. 없으면 빈 리스트."""
+    try:
+        with open(AUTO_GROUPS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError, json.JSONDecodeError):
+        return []
+
+
+def _my_group_addrs():
+    """내가 소속된 그룹(배포 리스트) 주소 목록(소문자, 중복 제거).
+    (1) 수동 설정 config.MY_GROUPS (list 또는 콤마/세미콜론/개행 문자열)
+    (2) 자동 조회 캐시(widget_my_groups.json) 를 합친다.
+    런타임 설정 변경(user_config)도 반영되도록 매번 새로 읽는다."""
+    raw = getattr(_cfg, "MY_GROUPS", None) or []
+    if isinstance(raw, str):
+        raw = re.split(r"[;,\n]", raw)
+    combined = list(raw) + _load_auto_groups()
+    out, seen = [], set()
+    for a in combined:
+        s = str(a).strip().lower()
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+def _is_to_me(to_field):
+    """받는사람(To) 문자열에 내 이메일 또는 내 소속 그룹 주소가 있으면 True.
+    그룹으로 온 메일도 '나에게 온 것'으로 취급하기 위함."""
+    tf = (to_field or "").lower()
+    if MY_EMAIL and MY_EMAIL.lower() in tf:
+        return True
+    return any(g in tf for g in _my_group_addrs())
+
 # 처리 필요(액션) 신호 키워드
 ACTION_KEYWORDS = [
     "요청", "부탁", "검토", "확인", "회신", "답장", "회답", "마감", "기한",
@@ -320,7 +361,7 @@ def build_data():
         to_field = (r.get("받는사람", "") or "").lower()
         body = (r.get("제목", "") or "") + " " + (r.get("본문요약", "") or "")
         is_internal = bool(INTERNAL_DOMAIN) and INTERNAL_DOMAIN in from_field
-        to_me = MY_EMAIL.lower() in to_field
+        to_me = _is_to_me(to_field)   # 내 주소 또는 소속 그룹 주소 수신 포함
         name_match = bool(MY_NAME) and MY_NAME in body
         if not ((is_internal and to_me) or name_match):
             continue
@@ -372,7 +413,8 @@ def build_data():
         unread = any((m.get("구분") == "받은메일" and not m.get("읽음", True))
                      for m in msgs)
         # 내가 To(받는사람)에 있을 때만 내 담당(확인/미회신). 아니면 "참조"로 분류해 제외(CC 등)
-        to_me = MY_EMAIL.lower() in (last.get("받는사람", "") or "").lower()
+        # 내 소속 그룹 주소로 온 경우도 내 담당으로 취급
+        to_me = _is_to_me(last.get("받는사람", ""))
         if last_dir == "받은메일" and to_me and unread:
             status = "확인 필요"
         elif last_dir == "받은메일" and to_me:

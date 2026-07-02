@@ -20,11 +20,19 @@ MY_NAME = "홍길동"
 # 비워두면 MY_EMAIL 의 도메인 부분에서 자동으로 도출한다.
 INTERNAL_DOMAIN = ""
 
+# 내가 소속된 그룹(배포 리스트) 주소들 — 이 주소로 온 메일도 "나에게 온 것"으로 취급.
+# (그룹 발송 메일의 받는사람에는 그룹 주소만 찍히고 개인 주소는 안 들어오기 때문)
+# 예) MY_GROUPS = ["all_msl@mslifix.co.kr", "team@mslifix.co.kr"]
+MY_GROUPS = []
+
 # 가져올 메일 개수 (받은편지함/보낸편지함 각각)
 MAX_EMAILS = 50
 
 # 위임된(delegated) 권한 — Azure에서 추가한 것과 동일하게
-SCOPES = ["Mail.Read", "User.Read"]
+# GroupMember.Read.All: 내가 속한 그룹(배포 리스트) 자동 조회용. Azure 앱 등록에
+#   같은 권한을 추가하고 관리자 동의를 받아야 하며, 그 뒤 한 번 재로그인해야 적용됨.
+#   (권한이 없으면 그룹 자동 조회만 건너뛰고 나머지는 정상 동작)
+SCOPES = ["Mail.Read", "User.Read", "GroupMember.Read.All"]
 
 # 동시성 제어
 LOCK_TIMEOUT = 5

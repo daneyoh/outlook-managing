@@ -66,16 +66,22 @@ REVIEW_TEMPLATE = """<!doctype html>
   .proj-h{{display:flex;align-items:center;justify-content:space-between;
           padding:11px 15px;background:var(--card-hi);border-bottom:1px solid var(--line-soft)}}
   .proj-h .nm{{font-weight:700;color:var(--accent-hi);font-size:13px}}
+  .proj-h .nm .tag{{color:var(--amber);font-weight:400;font-size:11px;margin-left:6px}}
   .proj-h .cnt{{font-family:var(--mono);color:var(--accent);font-size:13px}}
-  table{{width:100%;border-collapse:collapse}}
-  th,td{{padding:8px 15px;text-align:left;border-bottom:1px solid var(--line-soft);
-        vertical-align:top;font-size:13px}}
-  th{{color:var(--faint);font-size:11px;font-weight:600;text-transform:uppercase;
-     letter-spacing:.5px}}
-  tr:last-child td{{border-bottom:none}}
-  td.dt{{font-family:var(--mono);color:var(--sub);font-size:12px;white-space:nowrap}}
-  td.to{{color:var(--accent-strong)}}
-  td.subj{{color:var(--ink)}}
+  .outline{{padding:6px 0}}
+  .ol2{{display:flex;align-items:baseline;gap:8px;padding:6px 15px 6px 24px;
+       border-bottom:1px solid var(--line-soft);font-size:13px}}
+  .ol2:last-child{{border-bottom:none}}
+  .ol2 .mk{{color:var(--accent);font-family:var(--mono);flex:0 0 auto}}
+  .ol2 .subj{{color:var(--ink);flex:1}}
+  .ol2 .to{{color:var(--accent-strong);font-size:12px;flex:0 0 auto}}
+  .ol2 .dt{{font-family:var(--mono);color:var(--sub);font-size:12px;flex:0 0 auto;white-space:nowrap}}
+  .ol2 .tag{{font-size:11px;flex:0 0 auto;padding:1px 7px;border-radius:8px}}
+  .ol2 .tag.done{{color:var(--good);background:rgba(63,224,160,.12)}}
+  .ol2 .tag.ing{{color:var(--amber);background:rgba(255,180,74,.12)}}
+  .ol3{{display:flex;align-items:baseline;gap:8px;padding:2px 15px 8px 48px;font-size:12px}}
+  .ol3 .mk{{color:var(--faint);font-family:var(--mono);flex:0 0 auto}}
+  .ol3 .obs{{color:var(--sub)}}
   .who-row{{display:flex;align-items:center;gap:10px;padding:7px 15px;
            border-bottom:1px solid var(--line-soft)}}
   .who-row:last-child{{border-bottom:none}}
@@ -198,25 +204,48 @@ def build_weekly_review():
         '</div>'
     )
 
-    # ---- 내가 보낸 메일 (프로젝트별) ----
+    # ---- 내가 보낸 메일 (프로젝트별 · 회고 아웃라인) ----
+    # 프로젝트(#) > 건/스레드(-) > 왕복 관찰(>) 3단 아웃라인으로 표시.
     sent_html = '<h2>내가 보낸 메일 · 프로젝트별</h2>'
     if groups_sorted:
         for proj, msgs in groups_sorted:
+            # 같은 스레드(정규화 제목)로 묶어 왕복 횟수를 관찰(>)로 뽑아낸다.
+            thread_order, thread_map = [], defaultdict(list)
+            for m in msgs:                       # msgs: 최신순
+                key = norm_subject(m.get("제목", ""))
+                if key not in thread_map:
+                    thread_order.append(key)
+                thread_map[key].append(m)
+            proj_ing = any(len(v) > 1 for v in thread_map.values())
+
             sent_html += (
                 '<div class="proj"><div class="proj-h">'
-                f'<span class="nm">{_esc(proj)}</span>'
+                f'<span class="nm">{_esc(proj)}'
+                f'<span class="tag">({"진행중" if proj_ing else "완료"})</span></span>'
                 f'<span class="cnt">{len(msgs)}건</span></div>'
-                '<table><tr><th>날짜</th><th>받는사람</th><th>제목</th></tr>'
+                '<div class="outline">'
             )
-            for m in msgs:
+            for key in thread_order:
+                items = thread_map[key]          # 스레드 내 최신순
+                latest = items[0]
+                ing = len(items) > 1
                 sent_html += (
-                    '<tr>'
-                    f'<td class="dt">{_esc(fmt_date(m.get("날짜", "")))}</td>'
-                    f'<td class="to">{_esc(m.get("받는사람", ""))}</td>'
-                    f'<td class="subj">{_esc(m.get("제목", ""))}</td>'
-                    '</tr>'
+                    '<div class="ol2"><span class="mk">-</span>'
+                    f'<span class="subj">{_esc(latest.get("제목", ""))}</span>'
+                    f'<span class="to">{_esc(latest.get("받는사람", ""))}</span>'
+                    f'<span class="dt">{_esc(fmt_date(latest.get("날짜", "")))}</span>'
+                    f'<span class="tag {"ing" if ing else "done"}">{"진행중" if ing else "완료"}</span>'
+                    '</div>'
                 )
-            sent_html += '</table></div>'
+                if ing:
+                    oldest = items[-1]
+                    sent_html += (
+                        '<div class="ol3"><span class="mk">&gt;</span>'
+                        f'<span class="obs">{len(items)}회 메일 왕복 · '
+                        f'최초 {_esc(fmt_date(oldest.get("날짜", "")))} → '
+                        f'최근 {_esc(fmt_date(latest.get("날짜", "")))}</span></div>'
+                    )
+            sent_html += '</div></div>'
     else:
         sent_html += '<div class="empty">지난 7일 동안 보낸 메일이 없습니다.</div>'
 

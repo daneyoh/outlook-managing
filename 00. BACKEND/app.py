@@ -56,6 +56,9 @@ VIP_FILE = os.path.join(STATE_DIR, "widget_vip.json")
 IMPORTANT_FILE = os.path.join(STATE_DIR, "widget_important.json")
 NOTES_FILE = os.path.join(STATE_DIR, "widget_notes.json")
 DONE_LOG_FILE = os.path.join(STATE_DIR, "widget_done_log.json")
+# 숨김 시각 기록: {제목: ISO시각} — 숨김 목록을 '확인 누른 순서'(최신순)로 정렬하기 위한 보조.
+# 실제 숨김 여부는 done/excluded/snooze 가 판단하므로, 이 파일의 오래된 항목이 남아도 무해.
+HIDE_TS_FILE = os.path.join(STATE_DIR, "widget_hide_ts.json")
 PROJECTS_FILE = os.path.join(STATE_DIR, "widget_projects.json")
 PROJECT_CARDS_FILE = os.path.join(STATE_DIR, "widget_project_cards.json")
 MAX_AGE_DAYS = getattr(config, "MAX_AGE_DAYS", 90)
@@ -169,6 +172,28 @@ def _save_anchor_map(path, amap):
         return True
     except Exception:
         return False
+
+
+def _load_hide_ts():
+    """{제목: ISO시각} 로드. 실패 시 빈 dict."""
+    try:
+        with open(HIDE_TS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+def _touch_hide_ts(key):
+    """key 를 숨긴 '지금' 시각으로 기록(재확인 시 최신으로 갱신)."""
+    if not key:
+        return
+    try:
+        m = _load_hide_ts()
+        m[key] = datetime.now().isoformat(timespec="seconds")
+        state_io.write_json(HIDE_TS_FILE, m)
+    except Exception:
+        pass
 
 
 def _append_done_log(key):
@@ -374,23 +399,37 @@ def _prep_view(data):
                     or _internal_domain not in (t.get("답장주소", "") or "").lower())]
     replies.sort(key=lambda t: (t.get("경과일") is None, -(t.get("경과일") or 0)))
 
-    # 긴급/마감: 받은메일 중 키워드 포함
-    urgent = []
+    # 긴급/마감: 받은메일 중 키워드 포함. 같은 스레드(정규화 제목) 반복 언급은
+    # 최신 1건으로 묶고 건수를 매겨 목록에 중복으로 안 뜨게 한다.
+    urgent_groups = {}
     for r in table:
         if r.get("구분") != "받음":
             continue
-        if _is_urgent(r.get("제목", ""), r.get("요약", "")):
-            urgent.append({
+        if not _is_urgent(r.get("제목", ""), r.get("요약", "")):
+            continue
+        gkey = build_dashboard.norm_subject(r.get("제목", "")) or r.get("제목", "")
+        raw_date = r.get("날짜", "") or ""
+        g = urgent_groups.get(gkey)
+        if g is None or raw_date > g["_raw"]:
+            urgent_groups[gkey] = {
+                "_raw": raw_date,
                 "제목": r.get("제목", ""),
                 "보낸사람": r.get("상대", ""),
                 "날짜": r.get("날짜", ""),
-                "미읽음": r.get("미읽음", False),
+                "미읽음": r.get("미읽음", False) or (g["미읽음"] if g else False),
                 "링크": r.get("링크", ""),
-            })
+                "건수": (g["건수"] if g else 0) + 1,
+            }
+        else:
+            g["건수"] += 1
+            if r.get("미읽음", False):
+                g["미읽음"] = True
+    urgent = list(urgent_groups.values())
+    for u in urgent:
+        u.pop("_raw", None)
 
-    # TODO 에서 긴급(제목 중복) 제거
-    urgent_titles = {u["제목"] for u in urgent}
-    rest = [t for t in todos if t.get("제목", "") not in urgent_titles]
+    # 긴급/todos 중복 제거는 get_view 에서 정규화(_norm) 기준 '긴급' 플래그로 처리한다.
+    # (exact-string 매칭은 Re:/RE:/FW: 접두어 차이로 깨지므로 여기서 걸러내지 않음)
 
     # 미읽음 메일 (table 중 미읽음만, 표는 이미 최신순)
     unread = [{"제목": r.get("제목", ""), "상대": r.get("상대", ""),
@@ -405,7 +444,7 @@ def _prep_view(data):
         },
         "urgent": urgent,
         "replies": replies,
-        "todos": rest,
+        "todos": todos,
         "unread": unread,
         "projects": data.get("projects", []),
         "stats": data.get("stats", {}),
@@ -449,9 +488,15 @@ class Api:
         # 전체 메일(참조 포함). done/exclude/snooze 필터 미적용 — 풀 아카이브.
         full_table = data.get("table", [])
 
+        # 정규화(Re:/RE:/FW:/Fwd: 접두어 제거) 기준 매칭 — 스레드에 새 답장이 붙어
+        # 원 제목의 접두어/대소문자가 바뀌어도 숨김/복원·자동해제 상태가 계속 일치하도록 함.
+        _norm = build_dashboard.norm_subject
+
         # 현재 최근(최신 메일 시각) 맵 — Feature 1 자동 해제 비교 기준
         current_recent = {t.get("제목"): (t.get("최근") or "")
                           for t in data.get("threads", [])}
+        current_recent_norm = {_norm(t.get("제목", "")): (t.get("최근") or "")
+                               for t in data.get("threads", [])}
 
         # 숨김 파일 로드 (dict 앵커, 구버전 list 자동 마이그레이션)
         excluded = _load_anchor_map(EXCLUDE_FILE, current_recent)
@@ -463,7 +508,7 @@ class Api:
         def _release(amap):
             cleaned, changed = {}, False
             for k, anchor in amap.items():
-                cur = current_recent.get(k)
+                cur = current_recent_norm.get(_norm(k))
                 if cur is not None and (anchor or "") and cur > anchor:
                     changed = True            # 새 메일 → drop (자동 해제)
                     continue
@@ -481,7 +526,7 @@ class Api:
         sn_ch = False
         for k in list(snoozed.keys()):
             anchor = snoozed[k].get("anchor")
-            cur = current_recent.get(k)
+            cur = current_recent_norm.get(_norm(k))
             if cur is not None and anchor and cur > anchor:
                 del snoozed[k]
                 sn_ch = True
@@ -490,6 +535,9 @@ class Api:
 
         excluded_keys = set(excluded.keys())
         done_keys = set(done.keys())
+        excluded_norm = {_norm(k) for k in excluded_keys}
+        done_norm = {_norm(k) for k in done_keys}
+        snoozed_norm = {_norm(k) for k in snoozed.keys()}
 
         # VIP / 중요 / 메모 로드
         vips = _load_vip()
@@ -503,14 +551,17 @@ class Api:
         }
 
         # 미회신(회신대기): 제외/스누즈/완료 숨김
-        hidden_replies = excluded_keys | set(snoozed.keys()) | done_keys
+        hidden_replies_norm = excluded_norm | snoozed_norm | done_norm
         replies = [t for t in view["replies"]
-                   if t.get("제목") not in hidden_replies]
+                   if _norm(t.get("제목", "")) not in hidden_replies_norm]
 
         # urgent/todos/unread: 완료(done)만 숨김
-        urgent = [t for t in view["urgent"] if t.get("제목") not in done_keys]
-        todos = [t for t in view["todos"] if t.get("제목") not in done_keys]
-        unread = [t for t in view["unread"] if t.get("제목") not in done_keys]
+        urgent = [t for t in view["urgent"] if _norm(t.get("제목", "")) not in done_norm]
+        todos = [t for t in view["todos"] if _norm(t.get("제목", "")) not in done_norm]
+        unread = [t for t in view["unread"] if _norm(t.get("제목", "")) not in done_norm]
+
+        # 긴급 스레드(정규화 제목) 집합 — 각 버킷 행에 '긴급' 플래그로 표시하기 위함
+        urgent_norm = {_norm(u.get("제목", "")) for u in urgent}
 
         # --- Feature 3: VIP 표시 (발신자/답장주소 기준) ---
         for t in todos:
@@ -526,8 +577,9 @@ class Api:
         for lst in (todos, urgent, replies, unread, full_table):
             for t in lst:
                 t["중요"] = t.get("제목") in important          # 사용자 ★ (토글 가능)
-                t["루프"] = t.get("제목") in auto_important     # 4건+ 자동 (표시 전용)
+                t["루프"] = t.get("제목") in auto_important or (t.get("건수") or 0) >= 4  # 4건+ 자동 (표시 전용)
                 t["메모"] = notes.get(t.get("제목"), "")
+                t["긴급"] = _norm(t.get("제목", "")) in urgent_norm  # 긴급 키워드 스레드 → 버킷 행에 표시
 
         # --- 수동 태그 (widget_tags.json): 전체 뷰 행에 태그 부착 + 해당 섹션에 주입 ---
         tags = _load_tags()
@@ -538,7 +590,7 @@ class Api:
             nk = build_dashboard.norm_subject(row.get("제목", ""))
             row_tags = tags.get(nk, [])
             row["태그"] = row_tags
-            if not row_tags or nk in done_keys:
+            if not row_tags or nk in done_norm:
                 continue
             subj = row.get("제목", "")
             if "미읽음" in row_tags and subj not in unread_titles:
@@ -554,7 +606,7 @@ class Api:
                               "중요": row.get("중요", False), "vip": row.get("vip", False),
                               "메모": row.get("메모", "")})
                 todo_titles.add(subj)
-            if "미회신" in row_tags and nk not in hidden_replies and subj not in reply_titles and row.get("구분") != "보냄":
+            if "미회신" in row_tags and nk not in hidden_replies_norm and subj not in reply_titles and row.get("구분") != "보냄":
                 replies.append({"제목": subj, "보낸사람": row.get("상대", ""),
                                 "날짜": row.get("날짜", ""), "링크": row.get("링크", ""),
                                 "경과일": None, "루프": row.get("루프", False),
@@ -575,7 +627,7 @@ class Api:
         for p in view["projects"]:
             waiting = [t for t in p.get("threads", [])
                        if t.get("상태") == "회신 대기"
-                       and t.get("제목") not in hidden_replies]
+                       and _norm(t.get("제목", "")) not in hidden_replies_norm]
             for t in waiting:
                 t["vip"] = _is_vip(t.get("답장주소"), vips)
                 t["중요"] = t.get("제목") in important
@@ -592,6 +644,48 @@ class Api:
         # --- Feature 4: 새 미회신 / 14일+ 경과 OS 토스트 ---
         self._maybe_toast(replies)
 
+        # --- '전체에만' 보이는(홈 액션 섹션 미노출) 받은 스레드 → Internal/Mentioned/미회신 3분류 ---
+        # _shown: 이미 홈 버킷에 뜬 것 — 정규화(_norm) 기준 (Re:/RE:/FW: 접두어 차이로 안 깨지게)
+        _shown_norm = ({_norm(t.get("제목", "")) for t in urgent}
+                       | {_norm(t.get("제목", "")) for t in todos}
+                       | {_norm(t.get("제목", "")) for t in replies})
+        _hidden_all_norm = done_norm | excluded_norm | snoozed_norm
+        _intdom = getattr(build_dashboard, "INTERNAL_DOMAIN", "")
+        only_internal, only_mentioned, only_reply = [], [], []
+        for _t in data.get("threads", []):
+            if _t.get("최근방향") != "받음":     # 받은메일이 마지막인 스레드만 (보낸/회신완료 제외)
+                continue
+            _subj = _t.get("제목", "")
+            _nsubj = _norm(_subj)
+            if _nsubj in _shown_norm or _nsubj in _hidden_all_norm:
+                continue
+            _addr = _t.get("답장주소", "") or ""
+            _item = {
+                "제목": _subj,
+                "보낸사람": _addr,
+                "답장주소": _addr,
+                "요약": _t.get("요약", ""),
+                "날짜": _t.get("최근", ""),
+                "링크": _t.get("링크", ""),
+                "경과일": _t.get("경과일"),
+                "상태": _t.get("상태", ""),
+                "미읽음": _t.get("상태") == "확인 필요",
+                "vip": _is_vip(_addr, vips),
+                "중요": _subj in important,
+                "루프": _subj in auto_important,
+                "메모": notes.get(_subj, ""),
+                "긴급": _nsubj in urgent_norm,   # 긴급 키워드 스레드 → 미분류 행에도 표시
+            }
+            if _t.get("상태") in ("회신 대기", "확인 필요"):   # 내가 회신/확인해야 하나 홈에 안 뜬 것
+                only_reply.append(_item)
+            elif _intdom and _intdom in _addr.lower():         # 사내발 참조/기타
+                only_internal.append(_item)
+            else:                                               # 외부발 참조/기타
+                only_mentioned.append(_item)
+
+        # 긴급 잔여 폴백은 제거함. 자연히 버킷(todos/replies/only_*)에 잡힌 긴급만 '긴급' pill 로
+        # 표시하고, 사내도/내이름언급도 아닌 긴급 메일은 강제 편입하지 않는다(전체 탭에서만 보임).
+
         out = {
             "counts": {  # 카드 = 실제 보이는 개수 (완료/제외 반영)
                 "미읽음": len(unread),
@@ -600,11 +694,17 @@ class Api:
                 "외부요청": sum(1 for t in todos if (not t.get("내부여부")) and t.get("참조요청")),
                 "미회신": len(replies),
                 "긴급": len(urgent),
+                "미분류": len(only_internal) + len(only_mentioned) + len(only_reply),
             },
             "urgent": urgent,
             "replies": replies,
             "todos": todos,
             "unread": unread,
+            "only_all": {
+                "internal": only_internal,
+                "mentioned": only_mentioned,
+                "reply": only_reply,
+            },
             "projects": projects,
             "stats": view["stats"],
             "table": full_table,
@@ -664,8 +764,9 @@ class Api:
 
     def _empty_view(self):
         return {
-            "counts": {"미읽음": 0, "TODO": 0, "미회신": 0, "긴급": 0},
+            "counts": {"미읽음": 0, "TODO": 0, "미회신": 0, "긴급": 0, "미분류": 0},
             "urgent": [], "replies": [], "todos": [], "unread": [],
+            "only_all": {"internal": [], "mentioned": [], "reply": []},
             "projects": [], "stats": {}, "table": [], "mytodos": [],
             "memos": [], "project_cards": [], "갱신시각": "",
         }
@@ -702,19 +803,49 @@ class Api:
             data = build_dashboard.build_data()
         except Exception:
             return ""
+        nk = build_dashboard.norm_subject(key)
         for t in data.get("threads", []):
-            if t.get("제목") == key:
+            if build_dashboard.norm_subject(t.get("제목", "")) == nk:
                 return t.get("최근") or ""
         return ""
+
+    # --- 광고/스팸 판정: 표시 제목(광고표 제거됨)에 해당하는 원본 메일이
+    #     '광고' 머리표를 달고 있었는지 mailbox.json 원본에서 확인 ---
+    def _is_ad_key(self, key):
+        if not key:
+            return False
+        try:
+            if not os.path.exists(JSON_FILE):
+                return False
+            with open(JSON_FILE, encoding="utf-8") as f:
+                rows = json.load(f)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return False
+        norm_key = build_dashboard.norm_subject(_strip_ad(key))
+        for r in rows:
+            raw = r.get("제목", "")
+            # 회신/전달 접두어(Re:, Fwd: 등)를 벗긴 뒤 '광고' 머리표 판정
+            if not _AD_RE.match(build_dashboard.norm_subject(raw or "")):
+                continue
+            if build_dashboard.norm_subject(_strip_ad(raw)) == norm_key:
+                return True
+        return False
 
     # --- 완료(✓): widget_done.json — {제목: 앵커최근} 영구 추가 ---
     def mark_done(self, key):
         if not key:
             return {"ok": False}
+        # 광고/스팸 메일은 숨김(완료 앵커)에 남기지 않고 영구 삭제
+        if self._is_ad_key(key):
+            res = self.delete_item(key)
+            if isinstance(res, dict):
+                res["deleted_as_ad"] = True
+            return res
         done = _load_anchor_map(DONE_FILE, {})
         done[key] = self._anchor_for(key)
         _save_anchor_map(DONE_FILE, done)
         _append_done_log(key)
+        _touch_hide_ts(key)
         return {"ok": True}
 
     # --- 스누즈(💤): {key: {"until": ISO+3일, "anchor": 최근}} ---
@@ -731,6 +862,7 @@ class Api:
         until = (datetime.now() + timedelta(days=days)).date().isoformat()
         snoozed[key] = {"until": until, "anchor": self._anchor_for(key)}
         _save_snoozed(snoozed)
+        _touch_hide_ts(key)
         return {"ok": True}
 
     def get_done_count_today(self):
@@ -746,35 +878,61 @@ class Api:
             return 0
 
     def get_hidden(self):
-        """done/excluded/snooze 숨긴 항목을 소스 라벨과 함께 반환."""
+        """done/excluded/snooze 숨긴 항목을 소스 라벨과 함께 반환.
+        확인(숨김) 누른 순서 기준 최신순 — 방금 숨긴 항목이 맨 위.
+        같은 스레드가 Re:/RE:/FW: 접두어만 다르게 여러 번 숨겨진 구중복 키는
+        (kind별로) 가장 최근에 숨긴 키 하나만 남긴다 — unhide()가 정규화 기준으로
+        나머지도 함께 지우므로 목록에 하나만 보여도 복원 결과는 동일하다."""
         done = _load_anchor_map(DONE_FILE, {})
         excluded = _load_anchor_map(EXCLUDE_FILE, {})
         snoozed = _load_snoozed()
-        items = []
+        hide_ts = _load_hide_ts()
+
+        def _dedup(keys_with_kind_label):
+            best = {}  # (kind, norm제목) -> item
+            for key, kind, label in keys_with_kind_label:
+                gk = (kind, build_dashboard.norm_subject(key))
+                item = {"key": key, "kind": kind, "label": label}
+                cur = best.get(gk)
+                if cur is None or hide_ts.get(key, "") > hide_ts.get(cur["key"], ""):
+                    best[gk] = item
+            return list(best.values())
+
+        raw = []
         for key in done:
-            items.append({"key": key, "kind": "done", "label": "완료"})
+            raw.append((key, "done", "완료"))
         for key in excluded:
-            items.append({"key": key, "kind": "excluded", "label": "제외"})
+            raw.append((key, "excluded", "제외"))
         for key, v in snoozed.items():
             until = v.get("until", "") if isinstance(v, dict) else str(v)
-            items.append({"key": key, "kind": "snooze", "label": f"스누즈({until}까지)"})
+            raw.append((key, "snooze", f"스누즈({until}까지)"))
+        items = _dedup(raw)
+        # 숨긴 시각 내림차순(최신 확인이 맨 위). 시각 기록이 없는 구항목은 뒤로.
+        items.sort(key=lambda it: hide_ts.get(it["key"], ""), reverse=True)
         return items
 
     def unhide(self, key, kind):
-        """숨긴 항목 수동 해제."""
+        """숨긴 항목 수동 해제.
+        같은 스레드가 Re:/RE:/FW: 접두어만 다른 채 여러 번 숨김 처리된
+        구(舊) 중복 키로 남아있을 수 있어, 정규화 제목이 같은 키는 함께 지운다
+        (안 그러면 하나만 복원해도 남은 변형 키가 계속 가려버림)."""
         if not key or not kind:
             return {"ok": False}
+        nk = build_dashboard.norm_subject(key)
         if kind == "done":
             amap = _load_anchor_map(DONE_FILE, {})
-            amap.pop(key, None)
+            for k in [k for k in amap if build_dashboard.norm_subject(k) == nk]:
+                amap.pop(k, None)
             _save_anchor_map(DONE_FILE, amap)
         elif kind == "excluded":
             amap = _load_anchor_map(EXCLUDE_FILE, {})
-            amap.pop(key, None)
+            for k in [k for k in amap if build_dashboard.norm_subject(k) == nk]:
+                amap.pop(k, None)
             _save_anchor_map(EXCLUDE_FILE, amap)
         elif kind == "snooze":
             snoozed = _load_snoozed()
-            snoozed.pop(key, None)
+            for k in [k for k in snoozed if build_dashboard.norm_subject(k) == nk]:
+                snoozed.pop(k, None)
             _save_snoozed(snoozed)
         else:
             return {"ok": False, "msg": "알 수 없는 kind"}
@@ -789,8 +947,10 @@ class Api:
             if os.path.exists(JSON_FILE):
                 with open(JSON_FILE, encoding="utf-8") as f:
                     rows = json.load(f)
-            norm_key = build_dashboard.norm_subject(key)
-            kept = [r for r in rows if build_dashboard.norm_subject(r.get("제목", "")) != norm_key]
+            # 표시 제목은 광고표가 제거된 상태이므로, 원본 제목도 광고표를 벗겨서 비교
+            norm_key = build_dashboard.norm_subject(_strip_ad(key))
+            kept = [r for r in rows
+                    if build_dashboard.norm_subject(_strip_ad(r.get("제목", ""))) != norm_key]
             with state_io.lock(JSON_FILE):
                 state_io.write_json(JSON_FILE, kept)
             # 메일을 지웠으면 숨김 앵커(완료/제외/스누즈)도 함께 제거 — 안 그러면
@@ -812,9 +972,16 @@ class Api:
     def exclude(self, key):
         if not key:
             return {"ok": False}
+        # 광고/스팸 메일은 숨김(제외 앵커)에 남기지 않고 영구 삭제
+        if self._is_ad_key(key):
+            res = self.delete_item(key)
+            if isinstance(res, dict):
+                res["deleted_as_ad"] = True
+            return res
         excluded = _load_anchor_map(EXCLUDE_FILE, {})
         excluded[key] = self._anchor_for(key)
         _save_anchor_map(EXCLUDE_FILE, excluded)
+        _touch_hide_ts(key)
         return {"ok": True}
 
     # --- VIP 발신자 조회/추가/삭제 (Feature 3) ---
@@ -956,6 +1123,7 @@ class Api:
             "tenant_id": uc.get("TENANT_ID", getattr(config, "TENANT_ID", "")),
             "my_email":  uc.get("MY_EMAIL",  getattr(config, "MY_EMAIL",  "")),
             "my_name":   uc.get("MY_NAME",   getattr(config, "MY_NAME",   "")),
+            "my_groups": uc.get("MY_GROUPS", getattr(config, "MY_GROUPS", []) or []),
             "max_emails": uc.get("MAX_EMAILS", getattr(config, "MAX_EMAILS", 50)),
         }
 
@@ -966,6 +1134,7 @@ class Api:
             if payload.get("tenant_id") is not None: uc["TENANT_ID"]   = payload["tenant_id"].strip()
             if payload.get("my_email")  is not None: uc["MY_EMAIL"]    = payload["my_email"].strip()
             if payload.get("my_name")   is not None: uc["MY_NAME"]     = payload["my_name"].strip()
+            if payload.get("my_groups") is not None: uc["MY_GROUPS"]   = _parse_group_list(payload["my_groups"])
             if payload.get("max_emails") is not None: uc["MAX_EMAILS"] = int(payload["max_emails"])
             os.makedirs(STATE_DIR, exist_ok=True)
             state_io.write_json(USER_CONFIG_FILE, uc)
@@ -1152,6 +1321,23 @@ class Api:
             return list(projects.keys())
         except Exception:
             return []
+
+
+def _parse_group_list(raw):
+    """소속 그룹 주소 입력을 정리된 list 로 변환. list 또는 콤마/세미콜론/개행 문자열 허용."""
+    if isinstance(raw, list):
+        parts = raw
+    elif isinstance(raw, str):
+        parts = re.split(r"[;,\n]", raw)
+    else:
+        return []
+    seen, out = set(), []
+    for p in parts:
+        a = str(p).strip()
+        if a and a.lower() not in seen:
+            seen.add(a.lower())
+            out.append(a)
+    return out
 
 
 def _load_user_config():
