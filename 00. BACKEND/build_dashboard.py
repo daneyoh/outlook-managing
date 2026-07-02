@@ -397,7 +397,8 @@ def build_data():
     rows_union = rows_active + rows_archived
     received = [r for r in rows_union if r.get("구분") == "받은메일"]
     sent = [r for r in rows_union if r.get("구분") == "보낸메일"]
-    rules = load_project_rules()  # 프로젝트 규칙 1회 로드
+    project_rules = load_project_rules()  # 프로젝트 규칙 1회 로드
+    # 주의: 지역변수명은 project_rules — 모듈 `rules`(분류 규칙 단일 소스)를 섀도잉하지 않도록.
     now = datetime.now()
 
     # TODO: "나에게 온 요청" 수집
@@ -512,7 +513,7 @@ def build_data():
             "최근방향": "받음" if last_dir == "받은메일" else "보냄",
             "상태": status,
             "경과일": elapsed,
-            "프로젝트": project_of(last, rules),
+            "프로젝트": project_of(last, project_rules),
             "링크": last.get("링크", ""),
             "답장주소": reply_addr,
             "요약": last_summary[:160],
