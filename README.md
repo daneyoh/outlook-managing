@@ -203,6 +203,8 @@ Outlook(Microsoft 365) 받은 메일함을 항상 화면 한쪽에 띄워두는 
   fetch_loop.py      30분 주기 백그라운드 수집
   build_dashboard.py 대시보드·주간 리포트 생성
   weekly_review.py   주간 업무 회고 생성
+  rules.py           메일 분류 규칙 단일 소스 (긴급/사내/외부요청/미회신·키워드)
+  paths.py           파일 경로 상수 단일 소스 (frozen-aware)
   config.example.py  설정 템플릿 (config.py 로 복사해 사용)
   state_io.py        파일 락·JSON 저장 유틸
 
@@ -214,8 +216,10 @@ Outlook(Microsoft 365) 받은 메일함을 항상 화면 한쪽에 띄워두는 
   state/             위젯 상태 (완료·스누즈·메모 등)
   token_cache.bin    인증 토큰
 
+tests/               pytest 특성화 테스트 (순수함수 동작 고정)
 *.bat                실행 런처
 requirements.txt     Python 패키지 목록
+pyproject.toml       pytest 설정
 build.spec           PyInstaller EXE 빌드 설정
 ```
 
