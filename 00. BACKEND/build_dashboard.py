@@ -864,7 +864,7 @@ def get_card_mails(card, done_keys=None, excluded_keys=None):
     for mail in rows:
         sender = (mail.get("보낸사람") or "").lower()
         subject = (mail.get("제목") or "").lower()
-        summary = (mail.get("요약") or "").lower()
+        summary = (mail.get("본문요약") or "").lower()  # raw 메일은 요약을 '본문요약' 키로 보관 (fetch_mail.py:271)
         sender_match = senders and any(s in sender for s in senders)
         keyword_match = keywords and any(k in subject or k in summary for k in keywords)
         if not sender_match and not keyword_match:

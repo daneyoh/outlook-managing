@@ -59,8 +59,16 @@ DONE_LOG_FILE = os.path.join(STATE_DIR, "widget_done_log.json")
 # 숨김 시각 기록: {제목: ISO시각} — 숨김 목록을 '확인 누른 순서'(최신순)로 정렬하기 위한 보조.
 # 실제 숨김 여부는 done/excluded/snooze 가 판단하므로, 이 파일의 오래된 항목이 남아도 무해.
 HIDE_TS_FILE = os.path.join(STATE_DIR, "widget_hide_ts.json")
+# NOTE(Phase0/0.4): build_dashboard.py:25 also defines PROJECTS_FILE. Both resolve to the
+# identical absolute path — 개발 실행 시 두 모듈 모두 HERE=dirname(abspath(__file__)) (둘 다
+# "00. BACKEND"에 위치) → ROOT=dirname(HERE) → ROOT/"02. DB"/"state"/"widget_projects.json".
+# app.py는 frozen(PyInstaller) 분기에서 ROOT=dirname(sys.executable)를 쓰지만, 그 경우 실행
+# 파일이 프로젝트 루트에 놓이므로 동일 경로로 귀결됨. 단일 소스로 통합(paths.py)은 Phase 1.5로 유예.
 PROJECTS_FILE = os.path.join(STATE_DIR, "widget_projects.json")
 PROJECT_CARDS_FILE = os.path.join(STATE_DIR, "widget_project_cards.json")
+# NOTE(Phase0/0.2): 광고/스팸으로 판정된 메일을 mailbox.json에서 영구 삭제하는 대신
+# 이 숨김 휴지통으로 옮겨 복구 가능하게 함. 추가(additive) 파일 — 기존 리더는 아무도 읽지 않음.
+AD_TRASH_FILE = os.path.join(STATE_DIR, "widget_ad_trash.json")
 MAX_AGE_DAYS = getattr(config, "MAX_AGE_DAYS", 90)
 
 WIN_W, WIN_H = 360, 740
@@ -835,9 +843,9 @@ class Api:
     def mark_done(self, key):
         if not key:
             return {"ok": False}
-        # 광고/스팸 메일은 숨김(완료 앵커)에 남기지 않고 영구 삭제
+        # 광고/스팸 메일은 숨김(완료 앵커)에 남기지 않고 휴지통으로 소프트 삭제(복구 가능)
         if self._is_ad_key(key):
-            res = self.delete_item(key)
+            res = self._soft_delete_ad(key)
             if isinstance(res, dict):
                 res["deleted_as_ad"] = True
             return res
@@ -968,13 +976,63 @@ class Api:
         except Exception as e:
             return {"ok": False, "msg": str(e)}
 
+    # --- 광고/스팸 소프트 삭제(복구 가능): mailbox.json에서 제거하되 삭제 행을
+    #     widget_ad_trash.json 로 옮겨 보존. UI 동작(사라짐)은 delete_item과 동일하나
+    #     원본 메일은 휴지통에서 복구 가능. 추가 파일이라 기존 리더 계약에 영향 없음. ---
+    def _soft_delete_ad(self, key):
+        if not key:
+            return {"ok": False}
+        try:
+            rows = []
+            if os.path.exists(JSON_FILE):
+                with open(JSON_FILE, encoding="utf-8") as f:
+                    rows = json.load(f)
+            norm_key = build_dashboard.norm_subject(_strip_ad(key))
+            removed = [r for r in rows
+                       if build_dashboard.norm_subject(_strip_ad(r.get("제목", ""))) == norm_key]
+            kept = [r for r in rows
+                    if build_dashboard.norm_subject(_strip_ad(r.get("제목", ""))) != norm_key]
+            # 제거 대상을 휴지통에 append (기존 내용 보존; 형식 이상 시 새 리스트로 시작)
+            if removed:
+                trash = []
+                if os.path.exists(AD_TRASH_FILE):
+                    try:
+                        with open(AD_TRASH_FILE, encoding="utf-8") as f:
+                            loaded = json.load(f)
+                        if isinstance(loaded, list):
+                            trash = loaded
+                    except (OSError, ValueError, json.JSONDecodeError):
+                        trash = []
+                ts = datetime.now().isoformat(timespec="seconds")
+                for r in removed:
+                    entry = dict(r)
+                    entry["_ad_trashed_at"] = ts
+                    trash.append(entry)
+                with state_io.lock(AD_TRASH_FILE):
+                    state_io.write_json(AD_TRASH_FILE, trash)
+            with state_io.lock(JSON_FILE):
+                state_io.write_json(JSON_FILE, kept)
+            # 숨김 앵커(완료/제외/스누즈)도 함께 정리 — delete_item과 동일 처리.
+            done = _load_anchor_map(DONE_FILE, {})
+            if done.pop(key, None) is not None:
+                _save_anchor_map(DONE_FILE, done)
+            excluded = _load_anchor_map(EXCLUDE_FILE, {})
+            if excluded.pop(key, None) is not None:
+                _save_anchor_map(EXCLUDE_FILE, excluded)
+            snoozed = _load_snoozed()
+            if snoozed.pop(key, None) is not None:
+                _save_snoozed(snoozed)
+            return {"ok": True, "deleted": len(removed), "recoverable": True}
+        except Exception as e:
+            return {"ok": False, "msg": str(e)}
+
     # --- 제외(✕): widget_excluded.json — {제목: 앵커최근} 추가 ---
     def exclude(self, key):
         if not key:
             return {"ok": False}
-        # 광고/스팸 메일은 숨김(제외 앵커)에 남기지 않고 영구 삭제
+        # 광고/스팸 메일은 숨김(제외 앵커)에 남기지 않고 휴지통으로 소프트 삭제(복구 가능)
         if self._is_ad_key(key):
-            res = self.delete_item(key)
+            res = self._soft_delete_ad(key)
             if isinstance(res, dict):
                 res["deleted_as_ad"] = True
             return res
