@@ -251,28 +251,35 @@ class TestProjectOf:
         row = {"제목": "아무 제목", "보낸사람": "", "받는사람": ""}
         assert build_dashboard.project_of(row, {}) == "기타"
 
-    @pytest.mark.xfail(reason="Phase 2.1 will implement dict-field consumption "
-                               "(senders/keywords/subjects) for dict-shaped project "
-                               "entries; today's project_of iterates the dict's KEYS "
-                               "as if they were keyword strings, which is the bug "
-                               "Phase 2.1 fixes. This test asserts the INTENDED "
-                               "post-2.1 semantics, not current behavior.")
     def test_dict_input_matches_via_senders_field(self):
-        """Post-2.1 intended semantics: a dict-shaped project entry's `senders` list
-        should match against the mail's 보낸사람/받는사람 (same match shape as
-        build_dashboard.py:868's `any(s in sender for s in senders)`), even when
-        keywords/subjects are empty."""
+        """Phase 2.1 semantics: a dict-shaped project entry's `senders` list matches
+        against the mail's 보낸사람/받는사람 (same match shape as
+        build_dashboard.py's get_card_mails `any(s in sender for s in senders)`),
+        even when keywords/subjects are empty (senders-only match by sender alone)."""
         row = {"제목": "안건 없음", "보낸사람": "vip@partner.com", "받는사람": "me@x.com"}
         rules = {"파트너프로젝트": {"senders": ["vip@partner.com"], "keywords": [], "subjects": []}}
         assert build_dashboard.project_of(row, rules) == "파트너프로젝트"
 
-    @pytest.mark.xfail(reason="Phase 2.1 will implement dict-field consumption for "
-                               "dict-shaped project entries; keywords/subjects must "
-                               "match against normalized 제목, not dict keys.")
     def test_dict_input_matches_via_keywords_field(self):
         row = {"제목": "정산 마감 안내", "보낸사람": "a@x.com", "받는사람": "me@x.com"}
         rules = {"정산팀": {"senders": [], "keywords": ["정산"], "subjects": []}}
         assert build_dashboard.project_of(row, rules) == "정산팀"
+
+    def test_dict_input_matches_via_recipient(self):
+        """senders should also match against 받는사람 (recipient), per plan Step 1."""
+        row = {"제목": "회신", "보낸사람": "other@x.com", "받는사람": "team@partner.com"}
+        rules = {"파트너프로젝트": {"senders": ["team@partner.com"], "keywords": [], "subjects": []}}
+        assert build_dashboard.project_of(row, rules) == "파트너프로젝트"
+
+    def test_dict_input_matches_via_subjects_field(self):
+        row = {"제목": "월간 리포트 공유", "보낸사람": "a@x.com", "받는사람": "me@x.com"}
+        rules = {"리포트팀": {"senders": [], "keywords": [], "subjects": ["리포트"]}}
+        assert build_dashboard.project_of(row, rules) == "리포트팀"
+
+    def test_dict_input_no_match_returns_other(self):
+        row = {"제목": "무관한 제목", "보낸사람": "a@x.com", "받는사람": "me@x.com"}
+        rules = {"정산팀": {"senders": ["vip@partner.com"], "keywords": ["정산"], "subjects": []}}
+        assert build_dashboard.project_of(row, rules) == "기타"
 
 
 # ---------------------------------------------------------------------------

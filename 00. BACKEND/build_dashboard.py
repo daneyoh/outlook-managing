@@ -296,19 +296,40 @@ _BRACKET_RE = re.compile(r"^\s*[\[【]\s*([^\]】]+?)\s*[\]】]")
 def project_of(row, rules):
     """메일 1건의 프로젝트명을 판정한다.
     1) 제목(정규화) 앞 대괄호 태그가 있으면 그 태그 텍스트.
-    2) 없으면 rules의 키워드가 제목/보낸사람/받는사람에 처음 매칭되는 프로젝트명.
+    2) 없으면 rules 항목이 매칭되는 첫 프로젝트명.
+       - 레거시 리스트 항목 `[kw, ...]`: 각 kw 를 제목/보낸사람/받는사람 합본에 매칭
+         (미이관 파일 하위호환).
+       - 정규 dict 항목 `{senders, keywords, subjects}` (Phase 2.1):
+         · senders → 보낸사람·받는사람 양쪽에 매칭 (case-insensitive `any(s in ...)`;
+           get_card_mails 는 보낸사람만 매칭 — 여기서는 받는사람도 포함).
+         · keywords + subjects → 정규화 제목(norm_subject).
+         · senders 만 있고 keywords/subjects 가 비어도 발신자만으로 매칭.
     3) 없으면 "기타".
     """
     subj = norm_subject(row.get("제목", ""))
     m = _BRACKET_RE.match(subj)
     if m:
         return m.group(1).strip()
-    hay = (subj + " " + row.get("보낸사람", "") + " "
-           + row.get("받는사람", "")).lower()
-    for name, kws in rules.items():
-        for kw in (kws or []):
-            if kw and str(kw).lower() in hay:
+    subj_l = subj.lower()
+    sender_l = (row.get("보낸사람", "") or "").lower()
+    recip_l = (row.get("받는사람", "") or "").lower()
+    # 레거시 리스트 경로 하위호환: 제목/보낸사람/받는사람 합본
+    hay = subj_l + " " + sender_l + " " + recip_l
+    for name, val in rules.items():
+        if isinstance(val, dict):
+            senders = [str(s).lower() for s in (val.get("senders") or [])]
+            keywords = [str(k).lower() for k in (val.get("keywords") or [])]
+            subjects = [str(s).lower() for s in (val.get("subjects") or [])]
+            sender_match = any(s and (s in sender_l or s in recip_l)
+                               for s in senders)
+            subj_match = any(t and t in subj_l
+                             for t in (keywords + subjects))
+            if sender_match or subj_match:
                 return name
+        else:
+            for kw in (val or []):
+                if kw and str(kw).lower() in hay:
+                    return name
     return "기타"
 
 

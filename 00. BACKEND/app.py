@@ -1321,13 +1321,29 @@ class Api:
 
     # --- 프로젝트 규칙 저장 (발신자/키워드 자동 분류) ---
     def save_project(self, name, senders):
+        # 시그니처 동결(프론트 계약). Phase 2.1: 정규 dict 스키마로 저장.
+        # 프론트 입력은 '발신자 키워드'(placeholder) 이고 유일 실사용 경로가
+        # save_project(newName, email) → assign_sender_to_project 이므로
+        # parts 는 senders 필드로 라우팅한다(발신자 기준 분류로 의도 보존).
         name = (name or "").strip()
         if not name:
             return {"ok": False}
         # 쉼표/공백/줄바꿈 구분 → 리스트
         parts = [p.strip() for p in re.split(r"[,\s]+", senders or "") if p.strip()]
         rules = build_dashboard.load_project_rules()
-        rules[name] = parts
+        existing = rules.get(name)
+        if isinstance(existing, dict):
+            entry = {
+                "senders": list(existing.get("senders") or []),
+                "keywords": list(existing.get("keywords") or []),
+                "subjects": list(existing.get("subjects") or []),
+            }
+        else:
+            entry = {"senders": [], "keywords": [], "subjects": []}
+        for p in parts:
+            if p not in entry["senders"]:
+                entry["senders"].append(p)
+        rules[name] = entry
         _save_project_rules(rules)
         return {"ok": True}
 
