@@ -2190,6 +2190,45 @@
       d.counts.미회신 = d.replies.length; render();
     }
 
+    /* ── 중앙 API 래퍼 (Phase 2.3) ──
+       모든 pywebview 호출을 한 곳에서 감싸 실패 시 콘솔+상태바 토스트로 표면화하고,
+       낙관적 업데이트에는 롤백 훅을 제공한다. 기능(메서드) 부재는 오류가 아니라
+       기존 `if (api.xxx)` 가드와 동일하게 조용히 무시한다(토스트 없음).
+       실패/부재는 __handled 표식으로 reject 하여 성공 .then 을 건너뛰게 하고,
+       전역 unhandledrejection 핸들러가 표식 있는 reject 의 콘솔 경고만 억제한다. */
+    function setStatus(msg) { var st = document.getElementById("status"); if (st) st.textContent = msg; }
+    function callApi(method, args, opts) {
+      opts = opts || {};
+      var api = window.pywebview && window.pywebview.api;
+      if (!api || typeof api[method] !== "function") {
+        return Promise.reject({ __handled: true, unavailable: true, method: method });
+      }
+      var ret;
+      try { ret = api[method].apply(api, args || []); }
+      catch (e) { ret = Promise.reject(e); }
+      return Promise.resolve(ret).catch(function (err) {
+        console.error("[callApi] " + method + " 실패:", err);
+        if (!opts.silent) setStatus(opts.failMsg || ((opts.label || "작업") + " 실패"));
+        if (typeof opts.rollback === "function") { try { opts.rollback(); } catch (e2) { } }
+        return Promise.reject({ __handled: true, err: err });
+      });
+    }
+    // 낙관적 제거 + 실패 시 스냅샷 복원 (punch-list #4). 성공하면 백엔드 뷰로 재동기화.
+    function optimisticRemove(key, method, methodArgs, opts) {
+      opts = opts || {};
+      var snapshot = state.data ? JSON.parse(JSON.stringify(state.data)) : null;
+      removeKeyOptimistic(key);
+      return callApi(method, methodArgs, {
+        label: opts.label,
+        failMsg: (opts.label || "작업") + " 실패 — 되돌립니다",
+        rollback: function () { if (snapshot) { state.data = snapshot; render(); } }
+      }).then(function () { refresh(); }, function () { });
+    }
+    // callApi 는 실패를 이미 콘솔+토스트로 처리한다. 표식된 reject 의 Uncaught 경고만 억제.
+    window.addEventListener("unhandledrejection", function (e) {
+      if (e.reason && e.reason.__handled) e.preventDefault();
+    });
+
     /* ── 이벤트 ── */
     document.getElementById("proj-cards").addEventListener("click", function (e) {
       var btn = e.target.closest("[data-act]"); if (!btn) return;
@@ -2265,54 +2304,54 @@
       if (!api) return;
       if (act === "note-save") {
         var ta = document.getElementById("notefld-active");
-        if (api.set_note) api.set_note(btn.getAttribute("data-key"), ta ? ta.value : "")
+        callApi("set_note", [btn.getAttribute("data-key"), ta ? ta.value : ""], { label: "메모 저장" })
           .then(function () { state.noteOpen = null; refresh(); });
         return;
       }
-      if (act === "report") { api.gen_report(); return; }
-      if (act === "review") { api.open_weekly_review(); return; }
+      if (act === "report") { callApi("gen_report", [], { label: "리포트 생성" }); return; }
+      if (act === "review") { callApi("open_weekly_review", [], { label: "주간 리뷰 열기" }); return; }
       if (act === "todo-add") {
         var inp = document.getElementById("mytodo-in"), txt = inp && inp.value.trim();
         var tdl = document.getElementById("mytodo-dl");
-        if (txt) api.add_todo(txt, (tdl && tdl.value) || "").then(function () { state.openForm = null; refresh(); });
+        if (txt) callApi("add_todo", [txt, (tdl && tdl.value) || ""], { label: "할 일 추가" }).then(function () { state.openForm = null; refresh(); });
         return;
       }
-      if (act === "todo-done") { api.done_todo(btn.getAttribute("data-id")).then(refresh); return; }
-      if (act === "todo-del") { api.del_todo(btn.getAttribute("data-id")).then(refresh); return; }
+      if (act === "todo-done") { callApi("done_todo", [btn.getAttribute("data-id")], { label: "할 일 완료" }).then(refresh); return; }
+      if (act === "todo-del") { callApi("del_todo", [btn.getAttribute("data-id")], { label: "할 일 삭제" }).then(refresh); return; }
       if (act === "memo-add") {
         var mt = document.getElementById("memo-text");
         var mtxt = (mt && mt.value || "").trim();
-        if (mtxt && api.add_memo)
-          api.add_memo(mtxt, "", "").then(function () { state.openForm = null; refresh(); });
+        if (mtxt)
+          callApi("add_memo", [mtxt, "", ""], { label: "메모 추가" }).then(function () { state.openForm = null; refresh(); });
         return;
       }
-      if (act === "memo-del") { if (api.del_memo) api.del_memo(btn.getAttribute("data-id")).then(refresh); return; }
+      if (act === "memo-del") { callApi("del_memo", [btn.getAttribute("data-id")], { label: "메모 삭제" }).then(refresh); return; }
       if (act === "proj-save") {
         var nEl = document.getElementById("proj-name"), sEl = document.getElementById("proj-senders");
         var name = nEl && nEl.value.trim();
-        if (name) api.save_project(name, sEl ? sEl.value : "").then(function () { state.openForm = null; state.data = null; refresh(); });
+        if (name) callApi("save_project", [name, sEl ? sEl.value : ""], { label: "프로젝트 저장" }).then(function () { state.openForm = null; state.data = null; refresh(); });
         return;
       }
-      if (act === "proj-del") { api.del_project(btn.getAttribute("data-name")).then(function () { state.data = null; refresh(); }); return; }
+      if (act === "proj-del") { callApi("del_project", [btn.getAttribute("data-name")], { label: "프로젝트 삭제" }).then(function () { state.data = null; refresh(); }); return; }
       if (act === "vip-add") {
         var vEl = document.getElementById("vip-in"), email = vEl && vEl.value.trim();
-        if (email && api.add_vip) api.add_vip(email).then(function () { state.openForm = null; state.data = null; refresh(); });
+        if (email) callApi("add_vip", [email], { label: "VIP 추가" }).then(function () { state.openForm = null; state.data = null; refresh(); });
         return;
       }
-      if (act === "vip-del") { if (api.del_vip) api.del_vip(btn.getAttribute("data-email")).then(function () { state.data = null; refresh(); }); return; }
+      if (act === "vip-del") { callApi("del_vip", [btn.getAttribute("data-email")], { label: "VIP 삭제" }).then(function () { state.data = null; refresh(); }); return; }
       if (act === "snooze") { showSnoozeMenu(btn.getBoundingClientRect(), btn.getAttribute("data-key")); return; }
       if (act === "snooze-do") {
         var days = parseInt(btn.getAttribute("data-days") || "3", 10);
         var sk = btn.getAttribute("data-key");
         closeSnoozeMenu();
-        api.snooze(sk, days).then(refresh); removeKeyOptimistic(sk);
+        optimisticRemove(sk, "snooze", [sk, days], { label: "스누즈" });
         return;
       }
       if (act === "unhide") {
         var uhKey = btn.getAttribute("data-key"), uhKind = btn.getAttribute("data-kind");
         if (!api.unhide) return;
         var hitem = btn.closest(".hidden-item");
-        var doUnhide = function () { api.unhide(uhKey, uhKind).then(function () { loadHidden(); refresh(); }); };
+        var doUnhide = function () { callApi("unhide", [uhKey, uhKind], { label: "숨김 해제" }).then(function () { loadHidden(); refresh(); }); };
         if (hitem) {
           hitem.style.maxHeight = hitem.offsetHeight + "px";
           hitem.classList.add("swipe-out");
@@ -2328,16 +2367,15 @@
       if (act === "hidedel") {
         var delKey = btn.getAttribute("data-key");
         if (!confirm('"' + delKey + '" 관련 메일함에서 전부 제거?')) return;
-        if (api.delete_item) api.delete_item(delKey).then(function (r) { if (r && r.ok) { loadHidden(); refresh(); } });
+        callApi("delete_item", [delKey], { label: "삭제" }).then(function (r) { if (r && r.ok) { loadHidden(); refresh(); } });
         return;
       }
       if (act === "proj-do") {
         var pEmail = btn.getAttribute("data-email"), pName = btn.getAttribute("data-proj");
         closeProjMenu();
-        if (api.assign_sender_to_project)
-          api.assign_sender_to_project(pEmail, pName).then(function (r) {
-            if (r && r.ok) document.getElementById("status").textContent = "발신자→" + pName + " 지정 완료";
-          });
+        callApi("assign_sender_to_project", [pEmail, pName], { label: "발신자 지정" }).then(function (r) {
+          if (r && r.ok) setStatus("발신자→" + pName + " 지정 완료");
+        });
         return;
       }
       if (act === "proj-do-new") {
@@ -2347,19 +2385,18 @@
         if (!newName) return;
         closeProjMenu();
         // 프로젝트 저장 후 발신자 지정
-        api.save_project(newName, pEmail2).then(function (r) {
+        callApi("save_project", [newName, pEmail2], { label: "프로젝트 저장" }).then(function (r) {
           if (!r || !r.ok) return;
-          if (api.assign_sender_to_project)
-            api.assign_sender_to_project(pEmail2, newName).then(function (r2) {
-              if (r2 && r2.ok) { document.getElementById("status").textContent = "발신자→" + newName + " 지정 완료"; state.data = null; refresh(); }
-            });
+          callApi("assign_sender_to_project", [pEmail2, newName], { label: "발신자 지정" }).then(function (r2) {
+            if (r2 && r2.ok) { setStatus("발신자→" + newName + " 지정 완료"); state.data = null; refresh(); }
+          });
         });
         return;
       }
       if (act === "tag-toggle") {
         var tkey = btn.getAttribute("data-key");
         var tag = btn.getAttribute("data-tag");
-        if (api.tag_mail) api.tag_mail(tkey, tag).then(function (r) { if (r && r.ok) refresh(); });
+        callApi("tag_mail", [tkey, tag], { label: "태그" }).then(function (r) { if (r && r.ok) refresh(); });
         return;
       }
       // ── 동적 프로젝트 카드 액션 ──
@@ -2367,11 +2404,10 @@
         var pcnEl = document.getElementById("projcard-name");
         var newName = pcnEl && pcnEl.value.trim();
         if (!newName) return;
-        if (api.add_project_card)
-          api.add_project_card(newName).then(function(r) {
-            if (r && r.ok) { state.openProjCard = r.card && r.card.id; state.projCardTab[r.card.id] = 'info'; }
-            state.openForm = null; state.data = null; refresh();
-          });
+        callApi("add_project_card", [newName], { label: "프로젝트 카드 추가" }).then(function(r) {
+          if (r && r.ok) { state.openProjCard = r.card && r.card.id; state.projCardTab[r.card.id] = 'info'; }
+          state.openForm = null; state.data = null; refresh();
+        });
         return;
       }
       if (act === "toggle-proj-card") {
@@ -2389,12 +2425,11 @@
       if (act === "del-proj-card") {
         var delId = btn.getAttribute("data-id");
         if (!confirm("이 프로젝트 카드를 삭제하시겠습니까?")) return;
-        if (api.del_project_card)
-          api.del_project_card(delId).then(function() {
-            if (state.openProjCard === delId) state.openProjCard = null;
-            delete state.projCardTab[delId];
-            state.data = null; refresh();
-          });
+        callApi("del_project_card", [delId], { label: "프로젝트 카드 삭제" }).then(function() {
+          if (state.openProjCard === delId) state.openProjCard = null;
+          delete state.projCardTab[delId];
+          state.data = null; refresh();
+        });
         return;
       }
       if (act === "save-proj-info") {
@@ -2410,13 +2445,12 @@
         if (!nameVal) { alert("이름을 입력하세요."); return; }
         var actSwatch = form.querySelector(".color-swatch.active");
         var colorVal = actSwatch ? actSwatch.getAttribute("data-color") : "blue";
-        if (api.update_project_card)
-          api.update_project_card(saveId, { name: nameVal, senders: sendersVal, keywords: keywordsVal, color: colorVal })
-            .then(function(r) {
-              var st = document.getElementById("status");
-              if (st) { st.textContent = "저장됐습니다."; setTimeout(function(){ st.textContent = ""; }, 2000); }
-              state.data = null; refresh();
-            });
+        callApi("update_project_card", [saveId, { name: nameVal, senders: sendersVal, keywords: keywordsVal, color: colorVal }], { label: "카드 저장" })
+          .then(function(r) {
+            var st = document.getElementById("status");
+            if (st) { st.textContent = "저장됐습니다."; setTimeout(function(){ st.textContent = ""; }, 2000); }
+            state.data = null; refresh();
+          });
         return;
       }
       if (act === "save-proj-schedule") {
@@ -2430,16 +2464,15 @@
           var mName = n ? n.value.trim() : "";
           if (mName) milestones.push({ name: mName, date: dt ? dt.value : "" });
         });
-        if (api.update_project_card)
-          api.update_project_card(saveId, { milestones: milestones })
-            .then(function() { state.data = null; refresh(); });
+        callApi("update_project_card", [saveId, { milestones: milestones }], { label: "일정 저장" })
+          .then(function() { state.data = null; refresh(); });
         return;
       }
       var key = btn.getAttribute("data-key");
-      if (act === "important") { if (api.toggle_important) api.toggle_important(key).then(refresh); return; }
+      if (act === "important") { callApi("toggle_important", [key], { label: "중요 표시" }).then(refresh); return; }
       if (act === "done") {
         var row = btn.closest(".row");
-        var finish = function () { api.mark_done(key).then(refresh); removeKeyOptimistic(key); };
+        var finish = function () { optimisticRemove(key, "mark_done", [key], { label: "완료 처리" }); };
         if (row) {
           row.style.maxHeight = row.offsetHeight + "px";
           row.classList.add("swipe-out");
