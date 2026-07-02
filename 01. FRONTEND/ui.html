@@ -1952,7 +1952,11 @@
       if (!pf || pf === "메모") html += memoHtml(d);
       if (!pf || pf === "할일") html += myTodoHtml(d);
       if (!pf || pf === "프로젝트") {
-        html += '<button class="proj-dyn-add-btn" data-act="add-proj-card">' + icon('ph-plus') + ' 프로젝트 카드 추가</button>';
+        html += addToggleHtml("projcard", "프로젝트 카드 추가",
+          '<div class="addrow col">'
+          + '<input class="fld" id="projcard-name" type="text" placeholder="프로젝트 카드 이름">'
+          + '<button class="addbtn" data-act="add-proj-card">추가</button>'
+          + '</div>');
         html += renderDynProjectCards(d);
       }
       return html;
@@ -2221,7 +2225,7 @@
         var which = btn.getAttribute("data-form");
         state.openForm = (state.openForm === which) ? null : which; render();
         if (state.openForm === which) {
-          var fid = which === "todo" ? "mytodo-in" : which === "vip" ? "vip-in" : "proj-name";
+          var fid = which === "todo" ? "mytodo-in" : which === "vip" ? "vip-in" : which === "projcard" ? "projcard-name" : "proj-name";
           var el = document.getElementById(fid); if (el) el.focus();
         }
         return;
@@ -2352,12 +2356,13 @@
       }
       // ── 동적 프로젝트 카드 액션 ──
       if (act === "add-proj-card") {
-        var newName = prompt("프로젝트 카드 이름:");
-        if (!newName || !newName.trim()) return;
+        var pcnEl = document.getElementById("projcard-name");
+        var newName = pcnEl && pcnEl.value.trim();
+        if (!newName) return;
         if (api.add_project_card)
-          api.add_project_card(newName.trim()).then(function(r) {
+          api.add_project_card(newName).then(function(r) {
             if (r && r.ok) { state.openProjCard = r.card && r.card.id; state.projCardTab[r.card.id] = 'info'; }
-            state.data = null; refresh();
+            state.openForm = null; state.data = null; refresh();
           });
         return;
       }
