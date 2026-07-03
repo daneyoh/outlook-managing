@@ -6,7 +6,7 @@
 ; ============================================================
 
 #define MyAppName "Outlook 메일 위젯"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.0.2"
 #define MyAppExeName "OutlookWidget.exe"
 
 [Setup]
