@@ -34,7 +34,11 @@ Name: "desktopicon"; Description: "바탕화면에 바로가기 만들기"; Grou
 Name: "startupicon"; Description: "Windows 시작 시 자동 실행"; GroupDescription: "바로가기:"; Flags: unchecked
 
 [Files]
-Source: "..\dist\OutlookWidget\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; "02. DB" 는 개인 메일함/로그인 토큰/숨김이력 등 런타임 상태 — 개발 편의를 위해
+; dist\OutlookWidget\02. DB 를 실제 02. DB 로의 junction 으로 만들어두는 경우가
+; 있는데(설치\build.bat), Excludes 없이 재귀 복사하면 그 실제 개인 데이터가
+; 통째로 설치파일에 압축되어 들어간다(실측 확인된 사고 — 반드시 제외).
+Source: "..\dist\OutlookWidget\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "02. DB\*"
 Source: "MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]

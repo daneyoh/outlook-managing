@@ -1934,13 +1934,14 @@
         + '<button class="fchip' + (tab === "받은메일" ? " on" : "") + '" data-act="alltab" data-tab="받은메일">받은메일 (' + received.length + ')</button>'
         + '<button class="fchip' + (tab === "보낸메일" ? " on" : "") + '" data-act="alltab" data-tab="보낸메일">보낸메일 (' + sent.length + ')</button>'
         + '<button class="fchip' + (tab === "미분류" ? " on" : "") + '" data-act="alltab" data-tab="미분류" title="홈 섹션에 안 뜨고 전체에만 있는 받은메일">미분류 (' + uncat + ')</button>'
-        + '<button class="rpt-btn" data-act="report" style="margin-left:auto;">' + icon('ph-file-text') + ' 주간 리포트</button>'
+        + '<div style="flex-basis:100%;height:0"></div>'
+        + '<button class="rpt-btn" data-act="report">' + icon('ph-file-text') + ' 주간 리포트</button>'
         + '<button class="rpt-btn" data-act="review">' + icon('ph-calendar-blank') + ' 주간 회고</button>'
         + '<button class="fchip' + (state.hiddenOpen ? " on" : "") + '" id="hiddentoggle" data-act="toggle-hidden" style="white-space:nowrap;">'
         + (state.hiddenOpen ? "숨긴 항목 닫기 ▴" : "전체에서 숨긴 항목 보기 ▾") + '</button>'
         + '</div>'
         + '<div id="hidden-panel"' + (state.hiddenOpen ? ' class="on"' : '') + '></div>';
-
+          
       function mailRow(r) {
         var isLoop = (r.건수 || 0) >= 4;
         var dot = r.미읽음 ? '<span class="unread-dot"></span>' : "";
@@ -2532,6 +2533,20 @@
       var main = e.target.closest(".main[data-link]");
       if (main && window.pywebview && window.pywebview.api)
         window.pywebview.api.open_link(main.getAttribute("data-link"));
+    });
+
+    // 창 리사이즈: canvas 내부 해상도(cv.width)는 그대로인데 CSS width만 늘어나면
+    // 래스터가 그대로 확대되어 텍스트가 이미지처럼 뭉개진다 — 새 너비로 다시 그려서 방지.
+    // setTimeout 디바운스는 드래그 중 계속 늘어난 채로 있다가 멈췄을 때만 스냅되어
+    // 버벅이는 느낌을 줌 — rAF 쓰로틀로 매 프레임 부드럽게 갱신.
+    var resizeChartScheduled = false;
+    window.addEventListener("resize", function () {
+      if (resizeChartScheduled) return;
+      resizeChartScheduled = true;
+      requestAnimationFrame(function () {
+        resizeChartScheduled = false;
+        if (state.data && document.getElementById("ch-delay")) drawCharts(state.data);
+      });
     });
 
     window.addEventListener("focus", function () { refresh(); });

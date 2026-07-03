@@ -457,9 +457,21 @@ class Api:
         # 토스트 알림용 세션 추적 (첫 get_view 는 기준선만, 알림 무음)
         self._seen_replies = None   # set(회신대기 제목) — None=첫 호출
         self._seen_aged = set()     # 14일+ 경과 제목 집합
+        self._last_pos = {}         # resized/moved 이벤트로 갱신되는 마지막 정상 위치/크기
 
     def set_window(self, window):
         self._window = window
+        # closing 시점에 window.width/height 를 직접 읽으면 OS 종료 애니메이션과
+        # 경쟁해서 엉뚱한 값이 나올 수 있다 — 대신 이동/리사이즈 이벤트로 실시간
+        # 추적해두었다가 닫을 때는 그 마지막 값을 그대로 저장한다.
+        window.events.resized += self._on_resized
+        window.events.moved += self._on_moved
+
+    def _on_resized(self, width, height):
+        self._last_pos["w"], self._last_pos["h"] = width, height
+
+    def _on_moved(self, x, y):
+        self._last_pos["x"], self._last_pos["y"] = x, y
 
     # --- 단일 데이터 소스 ---
     def get_view(self):
@@ -1121,7 +1133,14 @@ class Api:
         if w is None:
             return {"ok": False}
         try:
-            x, y, ww, wh = int(w.x), int(w.y), int(w.width), int(w.height)
+            # closing 시점의 w.x/y/width/height 라이브 조회는 OS 종료 애니메이션과
+            # 경쟁해 엉뚱한 값을 반환할 수 있어(실측 확인됨), moved/resized 이벤트로
+            # 추적해둔 마지막 값을 우선 쓴다. 한 번도 안 움직였으면만 라이브 조회로 보충.
+            x = self._last_pos.get("x", w.x)
+            y = self._last_pos.get("y", w.y)
+            ww = self._last_pos.get("w", w.width)
+            wh = self._last_pos.get("h", w.height)
+            x, y, ww, wh = int(x), int(y), int(ww), int(wh)
             # 최소화/화면 밖(-32000 등)·비정상 크기면 저장 skip (다음 실행 시 안 보이는 문제 방지)
             if x <= -10000 or y <= -10000 or ww < 300 or wh < 300:
                 return {"ok": False, "skipped": "offscreen"}
@@ -1422,6 +1441,17 @@ def _restore_pos():
 if __name__ == "__main__":
     import webview
 
+    # AppUserModelID 명시 지정 — pinning/그룹핑을 pythonw.exe 의 범용 정체성이
+    # 아닌 이 앱 고유 식별자로 묶어준다. (참고: pythonw.exe 로 직접 실행하면
+    # 작업표시줄 버튼 자체가 아예 안 뜨는 이 머신 고유의 별개 이슈가 있음 —
+    # AUMID 로는 해결 안 되고, 빌드된 OutlookWidget.exe 실행으로 실측 해결 확인.
+    # 설치\install_widget_autostart.bat 이 exe 우선으로 자동시작을 구성함.)
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("MSL.OutlookMailWidget")
+    except Exception:
+        pass
+
     api = Api()
     x, y, w, h = _restore_pos()
 
@@ -1451,4 +1481,8 @@ if __name__ == "__main__":
 
     # http_port 고정: 랜덤 포트가 Chromium 의 unsafe port 목록(예: 6666,
     # IRC 대역)에 걸리면 ERR_UNSAFE_PORT 로 로드 자체가 실패한다.
-    webview.start(http_port=48200)
+    # icon 미지정 시 winforms 백엔드가 sys.executable(pythonw.exe)의 아이콘을
+    # 대신 뽑아써서, 자동시작(VBS→pythonw 직접 실행) 경로에서는 작업표시줄에
+    # 파이썬 기본 아이콘이 뜬다 — widget.ico 를 명시해 실행 경로와 무관하게 통일.
+    _icon_path = os.path.join(ROOT, "widget.ico")
+    webview.start(http_port=48200, icon=_icon_path if os.path.isfile(_icon_path) else None)

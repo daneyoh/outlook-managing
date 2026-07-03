@@ -31,6 +31,14 @@ if errorlevel 1 (
     pause & exit /b 1
 )
 
+:: 소스 실행(pythonw)과 빌드된 exe가 같은 메일함/로그인/숨김이력을 쓰도록
+:: dist\OutlookWidget\02. DB 를 실제 02. DB 로의 junction 으로 만든다.
+:: (빌드 exe는 frozen 모드에서 ROOT=exe가 놓인 폴더 기준으로 02. DB 를 찾으므로,
+::  junction 없이 그냥 실행하면 로그인/메일함/숨김 이력이 텅 빈 채로 새로 시작됨)
+if not exist "dist\OutlookWidget\02. DB" (
+  mklink /J "dist\OutlookWidget\02. DB" "02. DB" >nul
+)
+
 echo.
 echo ============================================
 echo  빌드 완료: dist\OutlookWidget\
